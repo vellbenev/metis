@@ -53,8 +53,8 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
   was deleted. A raw block whose hash is unchanged and that shares no clean block with a changed or deleted block causes
   zero model calls and its clean block stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
-  mark and are visually distinct until accepted. Code block text in the textbook carries no mark (TipTap code blocks
-  allow none); the rule skips code blocks.
+  mark and are visually distinct until accepted. Code block text (clean twin and textbook) carries no mark (TipTap code
+  blocks allow none); the rule skips code blocks everywhere.
 - **I5 No secrets in vaults**: API keys live only in browser storage, never in any file under a vault.
 - **I6 Network discipline**: the app makes no network request except to the configured provider `baseUrl`. All fonts and
   assets are bundled (no CDNs).
@@ -170,8 +170,11 @@ Storage rules:
 5. Validate (schema, source ids exist, every batch block is a source of some output block, no empty output, every
    input inline code span copied byte-identical, every Latin term of the batch kept (6.4); an invented code span becomes
    plain text; a `*` or `**` with no partner is read as text, the other markers still format). Retry once on invalid
-   output; on second failure leave that batch untouched and report it. A provider error (network, auth, ...) aborts
-   the whole run and writes nothing.
+   output; on second failure leave that batch untouched and report it. A missing Latin term also gets one retry, but
+   if the retry is otherwise valid and still misses a term it is accepted: every clean block whose sources include a
+   raw block with that term gets a `gap` mark on all its text (except `aiAdded` spans), and the run reports the raw
+   block and its missing terms (`unresolvedTerms`). A provider error (network, auth, ...) aborts the whole run and
+   writes nothing.
 6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
    their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean
    block is just reordered; final order follows raw order.
@@ -193,11 +196,14 @@ Storage rules:
 - Join `ای`, `ام`, `ات`, `اش` with ZWNJ only where they are suffixes (not the vocative `ای`).
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
 - Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them. Enforced in code: the batch's
-  Latin terms are listed in the request (`latinTerms`), and an output missing one is invalid (6.2 step 5). A term is a
-  run of Latin letters and digits that starts with a letter, with inner `-`, `_` or `.` joining parts (`zk-SNARK`,
-  `Node.js`, `ERC-20`); inline code, URLs, e-mail addresses and single letters are skipped. In the output a term must
+  Latin terms are listed in the request (`latinTerms`), and an output missing one is retried, then accepted with a
+  `gap` mark (6.2 step 5). A term is a run of Latin letters and digits that starts with a letter, with inner `-`, `_`
+  or `.` joining parts (`zk-SNARK`, `Node.js`, `ERC-20`). Not terms: inline code, URLs, e-mail addresses, tokens
+  shorter than 3 characters (`x`, `ok`, `vs`, `ZK`), tokens without two Latin letters in a row (`v1.2`, `e.g`, `x2`),
+  and the stoplist `ok okay eg ie etc vs aka btw fyi cf via et al` (case and dots ignored). In the output a term must
   occur as a whole Latin word; case, formatting, hyphen variants (`‑`, `–`) and a Persian suffix (`prover‌ها`) are
-  accepted.
+  accepted. Singular and regular English plural (`-s`, `-es`, `-ies`) count as the same term both ways: input
+  `provers` is kept by `prover‌ها` or `prover`, input `prover` by `provers`.
 - Unclear or incomplete notes: wrap the span in a `gap` mark; never guess.
 - Enrichment setting `off` | `flag-gaps` (default) | `light-add`. Only `light-add` may add text, and only inside an
   incomplete sentence, a few words to a sentence, marked `aiAdded`. Never new headings, never new paragraphs.

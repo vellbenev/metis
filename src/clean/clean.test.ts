@@ -14,6 +14,13 @@ import type { CleanDerivedStore, RawNoteReader } from './ports';
 
 // ---- helpers ---------------------------------------------------------------------------------
 
+function textNodes(node: JSONNode): JSONNode[] {
+	return typeof node.text === 'string' ? [node] : (node.content ?? []).flatMap(textNodes);
+}
+/** Text of every span with a `gap` mark, in document order (the data a gap list is built from). */
+const gapTexts = (note: CleanNote) =>
+	note.doc.content!.flatMap(textNodes).filter(n => n.marks?.some(m => m.type === 'gap')).map(n => n.text);
+
 interface Payload {
 	blocks: { id: string; text: string; previousClean?: string }[];
 	contextBefore: string[];
@@ -507,24 +514,71 @@ describe('validation and retry', () => {
 			expect(r).toMatchObject({ changed: true, modelCalls: 2, failed: [] });
 			expect(mock.calls[1].messages[3].content).toContain('Latin terms must be kept as written: prover');
 			expect(JSON.stringify(await loadClean())).toContain('prover');
+			expect(r.unresolvedTerms).toEqual([]);
+			expect(gapTexts(await loadClean())).toEqual([]);
 		});
 
-		it('missing twice: the batch is left untouched and reported, and its sync hash is not updated', async () => {
+		it('missing twice: the output is accepted with a gap mark, its sync hash updated, and reported', async () => {
 			await write([termsLine(), para('p2', 'دو')]);
 			await clean();
-			const cleanBefore = await loadClean();
 			const syncBefore = await loadSync();
+			const p2Before = cleanFor(await loadClean(), 'p2');
 
 			mock = createMockProvider(translate);
 			deps = { ...deps, provider: mock };
 			const changed = { ...termsLine(), content: [{ type: 'text', text: `${termsLine().content![0].text} !` }] };
 			await write([changed, para('p2', 'دو')]);
 			const r = await clean();
-			expect(r).toMatchObject({ changed: false, modelCalls: 2 });
-			expect(r.failed).toEqual([{ blockIds: ['a1'], error: 'Latin terms must be kept as written: prover' }]);
-			expect(await loadClean()).toEqual(cleanBefore);
-			expect(await loadSync()).toEqual(syncBefore);
-			expect((await loadSync()).blocks.a1.rawHash).toBe(syncBefore.blocks.a1.rawHash);
+			expect(r).toMatchObject({ changed: true, revision: 2, modelCalls: 2, failed: [] });
+			expect(r.unresolvedTerms).toEqual([{ blockId: 'a1', terms: ['prover'] }]);
+			expect(mock.calls[1].messages[3].content).toContain('Latin terms must be kept as written: prover');
+
+			const after = await loadClean();
+			const a1 = cleanFor(after, 'a1');
+			expect(a1).toHaveLength(1);
+			expect(a1[0].attrs!.changedIn).toBe(2);
+			// The whole clean block of a1 is a gap (and still rewrite, I4); it shows up in the gap data.
+			for (const n of textNodes(a1[0])) expect(n.marks!.map(m => m.type)).toEqual(['rewrite', 'gap']);
+			expect(gapTexts(after)).toEqual(textNodes(a1[0]).map(n => n.text));
+			expect(gapTexts(after).join('')).toContain('اثبات‌کننده');
+			// Unaffected blocks stay as they were (I3); the sync hash of a1 moves on, so it is not re-sent.
+			expect(cleanFor(after, 'p2')).toEqual(p2Before);
+			const sync = await loadSync();
+			expect(sync.blocks.a1.rawHash).not.toBe(syncBefore.blocks.a1.rawHash);
+			expect(sync.blocks.a1.lastRevision).toBe(2);
+			mock.reset();
+			expect(await clean()).toMatchObject({ changed: false, modelCalls: 0 });
+		});
+
+		it('only blocks whose own term is missing get the gap mark', async () => {
+			mock = createMockProvider(translate);
+			deps = { ...deps, provider: mock };
+			await write([termsLine(), para('p2', 'دو verifier')]);
+			const r = await clean();
+			expect(r.unresolvedTerms).toEqual([{ blockId: 'a1', terms: ['prover'] }]);
+			const after = await loadClean();
+			expect(gapTexts(after)).toEqual(cleanFor(after, 'a1').flatMap(textNodes).map(n => n.text));
+			expect(cleanFor(after, 'p2').flatMap(textNodes).every(n => !n.marks!.some(m => m.type === 'gap'))).toBe(true);
+		});
+
+		it('an English plural written as the singular plus a Persian suffix is accepted at once', async () => {
+			mock = createMockProvider(req => {
+				const [b] = payload(req).blocks;
+				return JSON.stringify({ blocks: [{ type: 'paragraph', text: 'prover‌ها و verifier', sources: [b.id] }] });
+			});
+			deps = { ...deps, provider: mock };
+			await write([para('p1', 'provers و verifiers')]);
+			expect(await clean()).toMatchObject({ changed: true, modelCalls: 1, failed: [], unresolvedTerms: [] });
+			expect(payload(mock.calls[0]) as unknown).toMatchObject({ latinTerms: ['provers', 'verifiers'] });
+		});
+
+		it('other invalid output after a missing term still leaves the batch untouched', async () => {
+			mock = createMockProvider((req, i) => (i === 0 ? translate(req) : '{"blocks": []}'));
+			deps = { ...deps, provider: mock };
+			await write([termsLine()]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: false, modelCalls: 2, failed: [{ blockIds: ['a1'], error: 'no blocks' }], unresolvedTerms: [] });
+			expect(await vault.derived.loadClean(fileId)).toBeUndefined();
 		});
 
 		it('a term kept with a Persian suffix, in bold or in another case is accepted', async () => {
@@ -562,9 +616,6 @@ describe('validation and retry', () => {
 
 // ---- provenance (I4) ---------------------------------------------------------------------------
 
-function textNodes(node: JSONNode): JSONNode[] {
-	return typeof node.text === 'string' ? [node] : (node.content ?? []).flatMap(textNodes);
-}
 
 describe('provenance marks (I4)', () => {
 	it('every text span of the clean doc is rewrite or aiAdded; gaps and additions are marked', async () => {
@@ -582,7 +633,11 @@ describe('provenance marks (I4)', () => {
 		deps = { ...deps, provider: mock };
 		await write([para('p1', 'متن'), { type: 'codeBlock', attrs: { id: 'c1' }, content: [{ type: 'text', text: 'x' }] }]);
 		await clean({ enrichment: 'light-add' });
-		const nodes = (await loadClean()).doc.content!.flatMap(textNodes);
+		const doc = (await loadClean()).doc.content!;
+		// Code block text carries no mark (TipTap code blocks allow none); I4 exempts code blocks.
+		const code = doc.filter(b => b.type === 'codeBlock');
+		expect(code.flatMap(textNodes)).toEqual([{ type: 'text', text: 'x' }]);
+		const nodes = doc.filter(b => b.type !== 'codeBlock').flatMap(textNodes);
 		expect(nodes.length).toBeGreaterThan(5);
 		for (const n of nodes) {
 			const types = n.marks!.map(m => m.type);

@@ -10,7 +10,7 @@ import type { Enrichment, Provider } from '../provider/types';
 import type { VaultPath } from '../vault/store';
 import type { CleanNote, RewriteLevel, SyncState } from '../vault/types';
 import { affectedIds, diffBlocks, isVerbatimBlock, makeBatches, type Batch, type RawBlock } from './diff';
-import { parseCleanOutput, specToNode, verbatimNode, type CleanBlockSpec } from './output';
+import { markGap, missingTermsError, parseCleanOutput, specToNode, verbatimNode, type CleanBlockSpec } from './output';
 import type { CleanDerivedStore, RawNoteReader } from './ports';
 import { blockText, codeSpans, latinTerms } from './text';
 
@@ -36,6 +36,12 @@ export interface FailedBatch {
 	error: string;
 }
 
+/** A raw block whose clean blocks were accepted without some of its Latin terms; they carry a `gap` mark. */
+export interface UnresolvedTerms {
+	blockId: BlockId;
+	terms: string[];
+}
+
 export interface CleanReport {
 	/** False when there was nothing to change (nothing written, no new revision). */
 	changed: boolean;
@@ -44,6 +50,8 @@ export interface CleanReport {
 	modelCalls: number;
 	/** Batches whose output was invalid twice; left untouched. */
 	failed: FailedBatch[];
+	/** Blocks cleaned with Latin terms still missing after the retry (SPEC 6.2 step 5). */
+	unresolvedTerms: UnresolvedTerms[];
 }
 
 const DEFAULT_CONTEXT = 2;
@@ -108,7 +116,9 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 
 	let modelCalls = 0;
 	const failed: FailedBatch[] = [];
-	const callModel = async (batch: Batch): Promise<CleanBlockSpec[] | string> => {
+	const unresolvedTerms: UnresolvedTerms[] = [];
+	type Output = { blocks: CleanBlockSpec[]; missingTerms: string[] };
+	const callModel = async (batch: Batch): Promise<Output | string> => {
 		const ids = batch.blocks.map(b => b.id);
 		const inputCode = batch.blocks.flatMap(b => codeSpans(b.block));
 		// Latin terms of the batch (case-insensitive repeats dropped); each must survive the rewrite.
@@ -146,8 +156,9 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			// A provider error (network, auth, ...) aborts the whole run; nothing is written.
 			const reply = (await provider.complete({ messages: request, json: true, signal: options.signal })).content;
 			const parsed = parseCleanOutput(reply, ids, options.enrichment, inputCode, inputTerms);
-			if (parsed.ok) return parsed.blocks;
-			error = parsed.error;
+			// Missing Latin terms get one retry; after that the otherwise valid output is accepted with a gap mark.
+			if (parsed.ok && (parsed.missingTerms.length === 0 || attempt === 1)) return parsed;
+			error = parsed.ok ? missingTermsError(parsed.missingTerms) : parsed.error;
 			request = retryMessages(messages, reply, error);
 		}
 		return error;
@@ -159,7 +170,14 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			failed.push({ blockIds: batch.blocks.map(b => b.id), error: result });
 			continue;
 		}
-		const nodes = result.map(spec => specToNode(spec, newId(), revision));
+		const missing = new Set(result.missingTerms.map(t => t.toLowerCase()));
+		for (const b of batch.blocks) {
+			const terms = latinTerms(b.block).filter(t => missing.has(t.toLowerCase()));
+			if (terms.length === 0) continue;
+			unresolvedTerms.push({ blockId: b.id, terms });
+			for (const spec of result.blocks) if (spec.sources.includes(b.id)) markGap(spec);
+		}
+		const nodes = result.blocks.map(spec => specToNode(spec, newId(), revision));
 		for (const b of batch.blocks) {
 			accept(b, nodes.filter(n => (n.attrs!.sources as BlockId[]).includes(b.id)));
 		}
@@ -191,7 +209,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 		JSON.stringify(content) === JSON.stringify(prevClean?.doc.content ?? []) &&
 		sortedEntries(blocks) === sortedEntries(prevSync?.blocks ?? {});
 	if (unchanged) {
-		return { changed: false, revision: prevSync?.revision ?? 0, modelCalls, failed };
+		return { changed: false, revision: prevSync?.revision ?? 0, modelCalls, failed, unresolvedTerms };
 	}
 
 	const clean: CleanNote = { version: 1, fileId, revision, doc: { type: 'doc', content } };
@@ -199,7 +217,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 	await derived.saveSnapshot(fileId, revision, { version: 1, clean: storedClean ?? null, sync: storedSync ?? null });
 	await derived.saveClean(clean);
 	await derived.saveSync(fileId, sync);
-	return { changed: true, revision, modelCalls, failed };
+	return { changed: true, revision, modelCalls, failed, unresolvedTerms };
 }
 
 /** Restores the latest snapshot (clean twin and sync state) and drops it. False if there is none. */

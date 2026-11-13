@@ -19,6 +19,16 @@ describe('splitLatinRuns', () => {
 		expect(ltrRuns(ollamaOriginsHint('http://localhost:5173'))).toEqual(['Ollama', 'OLLAMA_ORIGINS', 'origin', 'OLLAMA_ORIGINS=http://localhost:5173']);
 	});
 
+	it('keeps C++, C#, .NET, node.js and qwen3:8b whole', () => {
+		expect(ltrRuns('زبان C++ و C# و .NET')).toEqual(['C++', 'C#', '.NET']);
+		expect(ltrRuns('با C++، سریع‌تر')).toEqual(['C++']);
+		expect(ltrRuns('ابزار node.js و مدل qwen3:8b')).toEqual(['node.js', 'qwen3:8b']);
+		expect(ltrRuns('model: C# (.NET 8)')).toEqual(['model: C# (.NET 8']);
+		// A sign after a space is not part of the run, and a dot glued to Persian is not a prefix.
+		expect(ltrRuns('C + فارسی')).toEqual(['C']);
+		expect(ltrRuns('پایان.Next')).toEqual(['Next']);
+	});
+
 	it('leaves Persian text, Persian digits and Persian punctuation outside the runs', () => {
 		expect(splitLatinRuns('زمان ۱۲ ثانیه، prover؟')).toEqual([
 			{ text: 'زمان ۱۲ ثانیه، ', ltr: false },

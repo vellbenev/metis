@@ -46,7 +46,7 @@ export function cleanSystemPrompt(rewriteLevel: RewriteLevel, enrichment: Enrich
 		'- Be faithful: never add a claim, fact or example the user did not write. Do not drop anything the user wrote.',
 		`- Rewrite level ${LEVELS[rewriteLevel]}`,
 		'- Write semi-formal Persian; turn colloquial speech into clean written Persian without changing the meaning.',
-		'- Keep Latin technical terms in Latin exactly as written (for example zk-SNARK, prover); never translate or transliterate them. Every term listed in "latinTerms" must appear in your output, in Latin script, spelled as given (a Persian suffix after it is fine, joined with ZWNJ: prover‌ها); an output without one of them is rejected.',
+		'- Keep Latin technical terms in Latin exactly as written (for example zk-SNARK, prover); never translate or transliterate them. Every term listed in "latinTerms" must appear in your output, in Latin script, spelled as given (a Persian suffix after it is fine, joined with ZWNJ: prover‌ها; an English plural may become the singular with a Persian plural: provers -> prover‌ها); an output without one of them is rejected.',
 		'- Leave URLs, code and digits exactly as written; never change, translate or convert them.',
 		'- Use correct ZWNJ (نیم‌فاصله), for example می‌رود, کتاب‌ها. Join ای, ام, ات, اش with ZWNJ only where they are suffixes of the word before (خانه‌ای, خسته‌ام, خانه‌ات, خانه‌اش); keep them separate where they are words of their own (for example the vocative ای in ای خدا).',
 		'- Inline formatting is simple Markdown: `code`, **bold**, *italic*; a backslash escapes a literal \\, ` or *. Keep this formatting in your output, and copy every `code` span byte for byte.',

@@ -95,30 +95,61 @@ function termText(node: JSONNode): string {
 	return children.map(termText).join(inlineOnly ? '' : '\n');
 }
 
+/** Common words and abbreviations that are not technical terms (compared lowercase, dots removed). */
+export const TERM_STOPLIST: ReadonlySet<string> = new Set(['ok', 'okay', 'eg', 'ie', 'etc', 'vs', 'aka', 'btw', 'fyi', 'cf', 'via', 'et', 'al']);
+
+/**
+ * Whether a matched Latin word counts as a technical term: at least 3 characters, two Latin letters in a
+ * row somewhere (so `v1.2`, `e.g` and `x2` have no word shape), and not on the stoplist.
+ */
+function isTerm(word: string): boolean {
+	if (word.length < 3) return false;
+	if (!new RegExp(`[${LATIN}]{2}`, 'u').test(word)) return false;
+	return !TERM_STOPLIST.has(word.toLowerCase().replace(/\./g, ''));
+}
+
 /**
  * The Latin technical terms in a block, which the clean output must keep (SPEC 6.4). A term is a
- * Latin word as matched by TERM. Inline code spans (already checked byte for byte), URLs and e-mail
- * addresses are skipped, and so are single letters (variables such as x or n). Repeats are dropped
- * case-insensitively; the first spelling is kept.
+ * Latin word as matched by TERM that passes `isTerm`. Inline code spans (already checked byte for
+ * byte), URLs and e-mail addresses are skipped. Repeats are dropped case-insensitively; the first
+ * spelling is kept.
  */
 export function latinTerms(block: JSONNode): string[] {
 	const text = termText(block).replace(URL_OR_EMAIL, ' ');
 	const out = new Map<string, string>();
 	for (const [term] of text.matchAll(TERM)) {
-		if (term.length > 1 && !out.has(term.toLowerCase())) out.set(term.toLowerCase(), term);
+		if (isTerm(term) && !out.has(term.toLowerCase())) out.set(term.toLowerCase(), term);
 	}
 	return [...out.values()];
+}
+
+/** English singular of a word, by the regular plural rules only (proofs, hashes, properties). */
+function singular(word: string): string {
+	if (/[^aeiou]ies$/i.test(word) && word.length > 4) return `${word.slice(0, -3)}y`;
+	if (/(?:s|x|z|ch|sh)es$/i.test(word)) return word.slice(0, -2);
+	if (/[^s]s$/i.test(word) && word.length > 3) return word.slice(0, -1);
+	return word;
+}
+
+/** The spellings that satisfy a term: the term, its singular, and the regular plurals of that singular. */
+function termForms(term: string): string[] {
+	const one = singular(term);
+	const forms = [term, one, `${one}s`, `${one}es`];
+	if (/[^aeiou]y$/i.test(one)) forms.push(`${one.slice(0, -1)}ies`);
+	return [...new Set(forms)];
 }
 
 /**
  * Terms that do not occur in `text` as a whole Latin word. Case and hyphen variants (– for -) are
  * accepted, and so is anything non-Latin around a term: a Persian suffix with or without ZWNJ
- * (prover‌ها), punctuation, or formatting already removed from `text`.
+ * (prover‌ها), punctuation, or formatting already removed from `text`. Singular and English plural
+ * count as the same term both ways (provers is kept by prover‌ها, prover by provers).
  */
 export function missingTerms(text: string, terms: string[]): string[] {
 	const haystack = text.replace(HYPHENS, '-');
+	const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	return terms.filter(term => {
-		const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		return !new RegExp(`(?<![${LATIN}0-9])${escaped}(?![${LATIN}0-9])`, 'iu').test(haystack);
+		const forms = termForms(term).map(escape).join('|');
+		return !new RegExp(`(?<![${LATIN}0-9])(?:${forms})(?![${LATIN}0-9])`, 'iu').test(haystack);
 	});
 }

@@ -69,24 +69,25 @@ describe('parseCleanOutput', () => {
 		expect(spans('x * y و *ب*')).toEqual([['x * y و '], ['ب', 'italic']]);
 	});
 
-	it('requires every Latin term of the input; case, hyphen and Persian suffix variants pass', () => {
+	it('lists Latin terms of the input missing from the output; case, hyphen, plural and Persian suffix variants pass', () => {
 		const withTerms = (text: string, terms = ['zk-SNARK', 'prover']) =>
 			parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps', [], terms);
-		expect(withTerms('zk-SNARK و prover').ok).toBe(true);
-		expect(withTerms('اثبات‌کننده و zk-SNARK')).toEqual({ ok: false, error: 'Latin terms must be kept as written: prover' });
-		expect(withTerms('zk-SNARK و پروور').ok).toBe(false);
-		// A longer Latin word is not the term.
-		expect(withTerms('zk-SNARKs و prover').ok).toBe(false);
-		expect(withTerms('zk-SNARK و provers').ok).toBe(false);
+		expect(withTerms('zk-SNARK و prover')).toMatchObject({ ok: true, missingTerms: [] });
+		// Missing terms do not make the output invalid; they are listed for the caller.
+		expect(withTerms('اثبات‌کننده و zk-SNARK')).toMatchObject({ ok: true, missingTerms: ['prover'] });
+		expect(withTerms('zk-SNARK و پروور')).toMatchObject({ ok: true, missingTerms: ['prover'] });
+		// A longer Latin word is not the term; an English plural is.
+		expect(withTerms('zk-SNARKx و proverb')).toMatchObject({ ok: true, missingTerms: ['zk-SNARK', 'prover'] });
+		expect(withTerms('zk-SNARKs و provers')).toMatchObject({ ok: true, missingTerms: [] });
 		// Variants of valid output that must not be rejected.
-		expect(withTerms('**zk-SNARK** و *prover*').ok).toBe(true);
-		expect(withTerms('**zk**-SNARK و prover').ok).toBe(true);
-		expect(withTerms('ZK-SNARK و Prover').ok).toBe(true);
-		expect(withTerms('zk‑SNARK و prover').ok).toBe(true);
-		expect(withTerms('zk-SNARK‌ها و prover‌ها').ok).toBe(true);
-		expect(withTerms('zk-SNARKها، proverی.').ok).toBe(true);
-		expect(withTerms('(zk-SNARK) و «prover»').ok).toBe(true);
-		expect(withTerms('`zk-SNARK` و <gap>prover</gap>').ok).toBe(true);
+		expect(withTerms('**zk-SNARK** و *prover*')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('**zk**-SNARK و prover')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('ZK-SNARK و Prover')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('zk‑SNARK و prover')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('zk-SNARK‌ها و prover‌ها')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('zk-SNARKها، proverی.')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('(zk-SNARK) و «prover»')).toMatchObject({ ok: true, missingTerms: [] });
+		expect(withTerms('`zk-SNARK` و <gap>prover</gap>')).toMatchObject({ ok: true, missingTerms: [] });
 		const list = parseCleanOutput(
 			JSON.stringify({ blocks: [{ type: 'bulletList', items: ['zk-SNARK', 'prover'], sources: ['a'] }] }),
 			ids,
@@ -94,7 +95,7 @@ describe('parseCleanOutput', () => {
 			[],
 			['zk-SNARK', 'prover'],
 		);
-		expect(list.ok).toBe(true);
+		expect(list).toMatchObject({ ok: true, missingTerms: [] });
 	});
 
 	it('requires every input code span exactly; invented code spans become plain text', () => {
