@@ -1,6 +1,7 @@
 # Metis — SPEC (v0.1, draft)
 
-Owner: Hooman. This file is the source of truth. Slices are implemented from here; if something is ambiguous, ask the owner (do not guess silently).
+Owner: Hooman. This file is the source of truth. Slices are implemented from here; if something is ambiguous, ask the
+owner (do not guess silently).
 
 ## 1. What Metis is
 
@@ -27,7 +28,13 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 
 - **Vault**: a topic; maps to one folder on disk.
 - **Folder / File**: user-organised structure inside a vault.
-- **Block**: a top-level node of the rich-text document (paragraph, heading, list, quote, code, ...). Every block has a stable `id`. Only top-level nodes are blocks and carry ids; nested nodes (list items, table cells, ...) belong to their block, so a list is one block. Changing a block's type in place (paragraph -> heading, list, quote, ... and back) keeps its id. Empty blocks (e.g. the trailing empty paragraph the editor keeps) are skipped when hashing and syncing (S4).
+- **Block**: a top-level node of the rich-text document (paragraph, heading, list, quote, code, ...). Every block has a
+  stable `id`. Only top-level nodes are blocks and carry ids; nested nodes (list items, table cells, ...) belong to
+  their block, so a list is one block. Changing a block's type in place (paragraph -> heading, list, quote, ... and
+  back) keeps its id. An empty block is a paragraph with no content at all (no text, no inline nodes); horizontal rules,
+  images and code blocks are never empty. Empty blocks (e.g. the trailing empty paragraph the editor keeps) are skipped
+  when hashing and syncing (S4). Ids only need to be unique within one note; other notes may reuse an id, and the clean
+  twin and textbook refer to a block by (file, id).
 - **Clean twin**: derived document for one file, block-mapped to the raw file.
 - **Textbook**: derived document for one vault, built from clean twins, organised in sections.
 - **Provenance**: every piece of derived text is either `rewrite` (derived from the user's words) or `aiAdded` (the
@@ -38,7 +45,10 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 - **I1 Raw immutable**: no clean/textbook/provider code ever writes to `notes/**`. A test hashes raw files before and
   after a clean run and requires equality.
 - **I2 Stable block IDs**: editing a block's text never changes its id. Split keeps the id on the first part and mints a
-  new id for the rest. Merging two blocks keeps the first block's id. Moving a block (drag) keeps its id. Changing a block's type in place keeps its id. On paste, a block whose id already exists in the document gets a new id (copy-paste); otherwise it keeps its id (cut-paste is a move). IDs survive save/load round trips and are never reused.
+  new id for the rest. Merging two blocks keeps the first block's id. Moving a block (drag) keeps its id. Changing a
+  block's type in place keeps its id. On paste, a block whose id already exists in the document gets a new id
+  (copy-paste); otherwise it keeps its id (cut-paste is a move). IDs survive save/load round trips. No id appears twice
+  in the same note (cut-paste and undo may bring back a previously deleted id).
 - **I3 Incremental**: a raw block whose hash is unchanged since last sync causes zero model calls and its clean block
   stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
@@ -70,7 +80,7 @@ Folders and files under `notes/` mirror what the user sees. Everything under `.m
 rebuilt (at the cost of model calls).
 
 ```ts
-type BlockId = string; // nanoid(12), never reused
+type BlockId = string; // nanoid(12), unique within a note
 
 interface RawNote {
 	// notes/**/*.metis.json
@@ -108,8 +118,10 @@ interface Textbook {
 }
 ```
 
-`rawHash` = sha256 (hex) of the canonical JSON of the *normalised* block (6.1). Canonical form:
-- remove `attrs.id`; then omit `attrs` entirely if it is empty, and omit any attribute whose value is `null` or `undefined`;
+`rawHash` = sha256 (hex) of the canonical JSON of the _normalised_ block (6.1). Canonical form:
+
+- remove `attrs.id`; then omit `attrs` entirely if it is empty, and omit any attribute whose value is `null` or
+  `undefined`;
 - sort object keys lexicographically at every level; keep array order (content, marks) as is;
 - serialise as compact UTF-8 JSON, no whitespace.
 
@@ -128,13 +140,16 @@ The position of a block in the document is not part of its hash.
 ### 6.2 Steps
 
 1. Normalise a copy of the raw doc.
-2. Hash every non-empty top-level raw block (empty blocks are skipped) and compare with `SyncState`: classify `new`, `changed`, `unchanged`, `deleted`.
+2. Hash every non-empty top-level raw block (empty blocks are skipped) and compare with `SyncState`: classify `new`,
+   `changed`, `unchanged`, `deleted`.
 3. Group adjacent new/changed blocks into batches. Include up to N neighbouring clean blocks as read-only context.
 4. Call the `clean` provider profile. Expected output: JSON array of clean blocks, each with `sources: BlockId[]` (ids
    from the batch only).
 5. Validate (schema, source ids exist, no empty output). Retry once on invalid output; on second failure leave that
    batch untouched and report it.
-6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean block is just reordered; final order follows raw order.
+6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
+   their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean
+   block is just reordered; final order follows raw order.
 7. Snapshot the previous CleanNote + SyncState into `history/`, write the new ones, set `changedIn = revision` on
    touched blocks.
 8. Undo = restore the latest snapshot.
@@ -147,7 +162,8 @@ The position of a block in the document is not part of its hash.
 ### 6.4 Clean prompt rules (src/prompts/clean.ts)
 
 - Be faithful: never add claims the user did not make.
-- For a `changed` block that was cleaned before, the model also receives the previous raw text and the previous clean text and must keep the wording of the parts that did not change (no churn).
+- For a `changed` block that was cleaned before, the model also receives the previous raw text and the previous clean
+  text and must keep the wording of the parts that did not change (no churn).
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
 - Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them.
 - Unclear or incomplete notes: wrap the span in a `gap` mark; never guess.
@@ -162,7 +178,9 @@ The position of a block in the document is not part of its hash.
 - A section is regenerated only if any of its source files has a newer clean revision than `sourceRevisions` (I7).
 - Strict by default: content comes from the notes. Gaps are collected in `gaps`. With `light-add` the model may complete
   an incomplete sentence inline (marked `aiAdded`), never add a section or heading.
-- **Stale indicator** (pure function `countStaleFiles`): the number of files whose clean revision is newer than what the textbook was built from. Shown as a quiet count beside the vault, never a popup. There is no threshold and no rule: the user decides when to build.
+- **Stale indicator** (pure function `countStaleFiles`): the number of files whose clean revision is newer than what the
+  textbook was built from. Shown as a quiet count beside the vault, never a popup. There is no threshold and no rule:
+  the user decides when to build.
 
 ## 8. AI provider layer
 
@@ -198,25 +216,34 @@ interface ProviderSettings {
 
 ## 10. Stack (proposed; Hooman may change it before slice 1)
 
-**Decided.** TypeScript, React, Vite (static build, no server), TipTap v3 (>= 3.7, ProseMirror) for the editor, Vitest for tests, File System Access API for vault storage with an IndexedDB fallback. No backend.
+**Decided.** TypeScript, React, Vite (static build, no server), TipTap v3 (>= 3.7, ProseMirror) for the editor, Vitest
+for tests, File System Access API for vault storage with an IndexedDB fallback. No backend.
 
-Licensing rule: only open-source (MIT-compatible) dependencies. The TipTap core and its open-source extensions (including `@tiptap/markdown`) are free; never use `@tiptap-pro/*`, TipTap Cloud, or any package that needs a paid licence or an account.
+Licensing rule: only open-source (MIT-compatible) dependencies. The TipTap core and its open-source extensions
+(including `@tiptap/markdown`) are free; never use `@tiptap-pro/*`, TipTap Cloud, or any package that needs a paid
+licence or an account.
 
-Note: `@tiptap/markdown` is an early release with possible edge cases; the custom marks (`aiAdded`, `gap`) need custom serialisers.
+Note: `@tiptap/markdown` is an early release with possible edge cases; the custom marks (`aiAdded`, `gap`) need custom
+serialisers.
 
 ## 11. Slices
 
 Order: **S1 -> (S2 || S3) -> S4 -> S5 -> S6 -> S7**. S2 and S3 are independent and may run in parallel.
 
-Definition of done for every slice: tests pass; relevant invariants covered by tests; review has no must-fix items; no network access except to the configured provider.
+Definition of done for every slice: tests pass; relevant invariants covered by tests; review has no must-fix items; no
+network access except to the configured provider.
 
 ### S1 — Scaffold + block editor
 
 - Vite + React + TS + Vitest project; `npm test` works.
 - TipTap editor, RTL, paper theme, bundled Vazirmatn.
-- Every top-level block gets a stable id (I2): edit and in-place type change keep it, split mints a new id for the second part, merge keeps the first id, drag-move and cut-paste keep the id, copy-paste mints new ids, save/load round-trip preserves them. Each case needs a test.
-- Check the licence of any id package (e.g. TipTap's unique-id extension) before using it; if it is not MIT/free, write a small ProseMirror plugin instead.
-- `canonicalHash` follows the canonical form in section 5 (empty `attrs` omitted, keys sorted). Test: a block hashes the same with `attrs: {id}` as without `attrs`.
+- Every top-level block gets a stable id (I2): edit and in-place type change keep it, split mints a new id for the
+  second part, merge keeps the first id, drag-move and cut-paste keep the id, copy-paste mints new ids, save/load
+  round-trip preserves them. Each case needs a test.
+- Check the licence of any id package (e.g. TipTap's unique-id extension) before using it; if it is not MIT/free, write
+  a small ProseMirror plugin instead.
+- `canonicalHash` follows the canonical form in section 5 (empty `attrs` omitted, keys sorted). Test: a block hashes the
+  same with `attrs: {id}` as without `attrs`.
 - Pure `src/core/blocks.ts` with the canonical hash function.
 - Fixtures in `fixtures/persian/` are loadable in tests.
 
@@ -255,8 +282,10 @@ Definition of done for every slice: tests pass; relevant invariants covered by t
 - Tests with the mock provider: unchanged sections are not regenerated; outline ids stable.
 
 ### S7 — Markdown export
+
 - Export a raw note, its clean twin, or the textbook as `.md` (via `@tiptap/markdown`).
-- Export never modifies any vault file (I1). Unaccepted `aiAdded` spans are wrapped in HTML comments (`<!-- ai-added -->...<!-- /ai-added -->`) so provenance survives; `gap` spans export as plain text.
+- Export never modifies any vault file (I1). Unaccepted `aiAdded` spans are wrapped in HTML comments
+  (`<!-- ai-added -->...<!-- /ai-added -->`) so provenance survives; `gap` spans export as plain text.
 - Persian text, ZWNJ and Latin terms survive export unchanged (tests with fixtures).
 
 ## 12. Out of scope for v1
@@ -267,7 +296,9 @@ image/PDF import, Markdown import, exports other than Markdown (PDF, DOCX, ...).
 ## 13. Decisions and open questions
 
 Decided by Hooman:
+
 1. Stack: Vite + React + TipTap (open-source core only).
 2. Raw format is TipTap JSON; Markdown export is wanted (slice S7).
 3. No thresholds for the textbook: only a quiet stale-file count.
-4. Default enrichment mode is `flag-gaps`. The user can switch to `light-add` after testing the chosen model with the Test model button.
+4. Default enrichment mode is `flag-gaps`. The user can switch to `light-add` after testing the chosen model with the
+   Test model button.

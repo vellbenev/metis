@@ -11,3 +11,4 @@ coverage/
 CLAUDE.md
 docs/experiment-log.md
 docs/spec-questions.md
+*.tsbuildinfo
