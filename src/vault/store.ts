@@ -41,11 +41,14 @@ export interface NoteReader {
 export interface DerivedStore {
 	loadSync(fileId: string): Promise<SyncState | undefined>;
 	saveSync(fileId: string, state: SyncState): Promise<void>;
+	deleteSync(fileId: string): Promise<void>;
 	loadClean(fileId: string): Promise<CleanNote | undefined>;
 	saveClean(note: CleanNote): Promise<void>;
+	deleteClean(fileId: string): Promise<void>;
 	listSnapshots(fileId: string): Promise<number[]>;
 	loadSnapshot(fileId: string, revision: number): Promise<HistorySnapshot | undefined>;
 	saveSnapshot(fileId: string, revision: number, snapshot: HistorySnapshot): Promise<void>;
+	deleteSnapshot(fileId: string, revision: number): Promise<void>;
 	loadOutline(): Promise<TextbookOutline | undefined>;
 	saveOutline(outline: TextbookOutline): Promise<void>;
 	loadTextbook(): Promise<Textbook | undefined>;
@@ -133,8 +136,10 @@ export function createDerivedStore(metis: Dir): DerivedStore {
 	return {
 		loadSync: async id => readJson(await sub('sync'), file(id)),
 		saveSync: async (id, state) => writeJson(await sub('sync'), file(id), state),
+		deleteSync: async id => (await sub('sync')).remove(file(id)),
 		loadClean: async id => readJson(await sub('clean'), file(id)),
 		saveClean: async note => writeJson(await sub('clean'), file(note.fileId), note),
+		deleteClean: async id => (await sub('clean')).remove(file(id)),
 		async listSnapshots(id) {
 			const dir = await historyDir(id, false);
 			if (!dir) return [];
@@ -151,6 +156,10 @@ export function createDerivedStore(metis: Dir): DerivedStore {
 		async saveSnapshot(id, rev, snapshot) {
 			const name = `${revision(rev)}.json`;
 			await writeJson((await historyDir(id, true))!, name, snapshot);
+		},
+		async deleteSnapshot(id, rev) {
+			const name = `${revision(rev)}.json`;
+			await (await historyDir(id, false))?.remove(name);
 		},
 		loadOutline: async () => readJson(await sub('textbook'), 'outline.json'),
 		saveOutline: async outline => writeJson(await sub('textbook'), 'outline.json', outline),
