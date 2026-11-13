@@ -57,3 +57,10 @@ export interface Textbook {
 	sections: Record<string, { doc: TipTapJSON; sourceRevisions: Record<string, number> }>;
 	gaps: { sectionId: string; note: string }[];
 }
+
+/** .metis/textbook/history/<n>.json: the outline and textbook before a build, for undo. */
+export interface TextbookSnapshot {
+	version: 1;
+	outline: TextbookOutline | null;
+	textbook: Textbook | null;
+}

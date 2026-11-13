@@ -7,7 +7,16 @@
 import { nanoid } from 'nanoid';
 import { copyInto, segment, walk, type Dir } from './dir';
 import { assertNoSecrets } from './secrets';
-import type { CleanNote, HistorySnapshot, RawNote, SyncState, Textbook, TextbookOutline, VaultMeta } from './types';
+import type {
+	CleanNote,
+	HistorySnapshot,
+	RawNote,
+	SyncState,
+	Textbook,
+	TextbookOutline,
+	TextbookSnapshot,
+	VaultMeta,
+} from './types';
 
 export const META_FILE = 'metis.vault.json';
 export const NOTES_DIR = 'notes';
@@ -53,6 +62,14 @@ export interface DerivedStore {
 	saveOutline(outline: TextbookOutline): Promise<void>;
 	loadTextbook(): Promise<Textbook | undefined>;
 	saveTextbook(textbook: Textbook): Promise<void>;
+	// Textbook (S6): which clean twins exist, and outline/textbook snapshots for undo.
+	listCleanIds(): Promise<string[]>;
+	deleteOutline(): Promise<void>;
+	deleteTextbook(): Promise<void>;
+	listTextbookSnapshots(): Promise<number[]>;
+	loadTextbookSnapshot(n: number): Promise<TextbookSnapshot | undefined>;
+	saveTextbookSnapshot(n: number, snapshot: TextbookSnapshot): Promise<void>;
+	deleteTextbookSnapshot(n: number): Promise<void>;
 }
 
 export interface VaultStore extends NoteReader {
@@ -128,6 +145,13 @@ function checkRawNote(note: RawNote): void {
 export function createDerivedStore(metis: Dir): DerivedStore {
 	const sub = (name: string) => metis.getDir(name, { create: true }) as Promise<Dir>;
 	const file = (id: string) => `${fileId(id)}.json`;
+	const textbookHistory = async () => (await (await sub('textbook')).getDir('history', { create: true }))!;
+	/** Base names of the `<name>.json` files in a directory. */
+	const jsonNames = async (dir: Dir) =>
+		(await dir.list())
+			.filter(e => e.kind === 'file')
+			.map(e => /^(.+)\.json$/.exec(e.name)?.[1])
+			.filter((n): n is string => n !== undefined);
 	const historyDir = async (id: string, create: boolean) => {
 		const history = await metis.getDir('history', { create });
 		return history?.getDir(fileId(id), { create });
@@ -165,6 +189,18 @@ export function createDerivedStore(metis: Dir): DerivedStore {
 		saveOutline: async outline => writeJson(await sub('textbook'), 'outline.json', outline),
 		loadTextbook: async () => readJson(await sub('textbook'), 'textbook.json'),
 		saveTextbook: async textbook => writeJson(await sub('textbook'), 'textbook.json', textbook),
+		// Textbook (S6)
+		listCleanIds: async () => jsonNames(await sub('clean')),
+		deleteOutline: async () => (await sub('textbook')).remove('outline.json'),
+		deleteTextbook: async () => (await sub('textbook')).remove('textbook.json'),
+		listTextbookSnapshots: async () =>
+			(await jsonNames(await textbookHistory()))
+				.filter(n => /^\d+$/.test(n))
+				.map(Number)
+				.sort((a, b) => a - b),
+		loadTextbookSnapshot: async n => readJson(await textbookHistory(), `${revision(n)}.json`),
+		saveTextbookSnapshot: async (n, snapshot) => writeJson(await textbookHistory(), `${revision(n)}.json`, snapshot),
+		deleteTextbookSnapshot: async n => (await textbookHistory()).remove(`${revision(n)}.json`),
 	};
 }
 

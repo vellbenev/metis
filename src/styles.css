@@ -69,3 +69,43 @@ body {
 	padding: 0;
 	background: none;
 }
+
+.textbook-back {
+	font: inherit;
+	font-size: 0.85rem;
+	color: var(--ink-soft);
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+
+.textbook-section {
+	border-inline-start: 2px solid transparent;
+	padding-inline-start: 0.75rem;
+}
+
+.textbook-section.changed {
+	border-inline-start-color: var(--rule);
+	background: rgba(220, 207, 174, 0.25);
+}
+
+.textbook .ai-added {
+	color: var(--ink-soft);
+	border-bottom: 1px dashed var(--ink-soft);
+}
+
+.textbook .gap {
+	background: var(--code-bg);
+}
+
+.textbook pre {
+	background: var(--code-bg);
+	padding: 0.5rem 0.75rem;
+	text-align: left;
+}
+
+.textbook-gaps {
+	font-size: 0.9rem;
+	color: var(--ink-soft);
+}

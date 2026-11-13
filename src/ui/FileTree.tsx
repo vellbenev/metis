@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { TreeFolder, TreeItem, VaultPath, VaultStore } from '../vault/store';
 import './vault.css';
 
@@ -12,6 +12,8 @@ export interface FileTreeProps {
 	beforeChange?(): void | Promise<void>;
 	/** Called after a rename, whether it succeeded or not. */
 	afterChange?(): void;
+	/** Shown under the vault name (the quiet Textbook control). */
+	aside?: ReactNode;
 }
 
 type Editing =
@@ -43,7 +45,7 @@ function NameInput(props: { initial: string; label: string; onSubmit(name: strin
 	);
 }
 
-export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, afterChange }: FileTreeProps) {
+export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, afterChange, aside }: FileTreeProps) {
 	const [tree, setTree] = useState<TreeFolder>();
 	const [editing, setEditing] = useState<Editing>();
 	const [error, setError] = useState<string>();
@@ -163,6 +165,7 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, aft
 				<strong dir='auto'>{store.meta.name}</strong>
 				{actions([])}
 			</div>
+			{aside}
 			<ul>
 				{tree?.children.map(renderItem)}
 				{pending([])}
