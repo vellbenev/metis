@@ -72,8 +72,9 @@ describe('FileTree', () => {
 		const store = await memoryVault('ZKP');
 		await store.createNote([], 'old');
 		const beforeChange = vi.fn();
+		const afterChange = vi.fn();
 		const onMoved = vi.fn();
-		const { onOpen } = await render(store, { beforeChange, onMoved, activePath: ['old'] });
+		const { onOpen } = await render(store, { beforeChange, afterChange, onMoved, activePath: ['old'] });
 		const note = host.querySelector('.tree-note')!;
 		expect(note.getAttribute('aria-current')).toBe('page');
 		await act(async () => (note as HTMLElement).click());
@@ -83,6 +84,7 @@ describe('FileTree', () => {
 		await typeAndSubmit('new');
 		expect(beforeChange).toHaveBeenCalled();
 		expect(onMoved).toHaveBeenCalledWith(['old'], ['new']);
+		expect(afterChange).toHaveBeenCalledTimes(1);
 		expect(texts('.tree-note')).toEqual(['new']);
 	});
 
@@ -93,5 +95,42 @@ describe('FileTree', () => {
 		await act(async () => button('پوشه‌ی تازه').click());
 		await typeAndSubmit('f');
 		expect(host.querySelector('[role=alert]')!.textContent).toMatch(/already exists/);
+	});
+
+	it('resumes autosave even when a rename fails', async () => {
+		const store = await memoryVault('ZKP');
+		await store.createNote([], 'a');
+		await store.createNote([], 'b');
+		const afterChange = vi.fn();
+		const onMoved = vi.fn();
+		await render(store, { afterChange, onMoved });
+		await act(async () =>
+			host.querySelector('.tree-note')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })),
+		);
+		await typeAndSubmit('b');
+		expect(host.querySelector('[role=alert]')!.textContent).toMatch(/already exists/);
+		expect(afterChange).toHaveBeenCalledTimes(1);
+		expect(onMoved).not.toHaveBeenCalled();
+	});
+
+	it('keeps ZWNJ in names and lets Latin names set their own direction', async () => {
+		const store = await memoryVault('ZKP');
+		await store.createFolder([], 'درس‌ها');
+		await store.createNote(['درس‌ها'], 'zk-SNARK');
+		await render(store);
+		expect(texts('.tree-name')).toEqual(['درس‌ها']);
+		expect(texts('.tree-note')).toEqual(['zk-SNARK']);
+		for (const el of host.querySelectorAll('.tree-name, .tree-note')) expect(el.getAttribute('dir')).toBe('auto');
+	});
+
+	it('warns about notes that share a fileId', async () => {
+		const store = await memoryVault('ZKP');
+		const note = await store.createNote([], 'a');
+		await store.saveNote(['b'], note); // a duplicate, as a crash during a rename could leave
+		await render(store);
+		const warning = host.querySelector('[role=status]')!;
+		expect(warning.textContent).toContain('a');
+		expect(warning.textContent).toContain('b');
+		expect(texts('.tree-note')).toEqual(['a', 'b']);
 	});
 });

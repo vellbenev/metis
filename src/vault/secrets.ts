@@ -1,6 +1,7 @@
 // I5: nothing secret is ever written into a vault. Every JSON write goes through this check.
 
-const SECRET_KEY = /^(api[-_]?key|secret|client[-_]?secret|password|authorization|access[-_]?token|bearer)$/i;
+// Matched anywhere in a key, ignoring case: catches `openaiApiKey`, `x-api-key`, `apiKeys`, `refreshToken`.
+const SECRET_KEY = /api[-_]?key|secret|token|password|authorization|bearer/i;
 
 /** Throws if `value` contains an object key that names a secret, at any depth. */
 export function assertNoSecrets(value: unknown, path = '$'): void {

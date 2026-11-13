@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { canonicalHash } from '../core/blocks';
 import { FakeDirectoryHandle } from '../test/fakeFsa';
 import { loadFixture, textToDoc } from '../test/fixtures';
@@ -21,6 +21,11 @@ interface Backend {
 const backends: Backend[] = [
 	{ name: 'memory', emptyDir: async () => new MemoryDir() },
 	{ name: 'File System Access', emptyDir: async () => new FsaDir(new FakeDirectoryHandle('vault')) },
+	{
+		// macOS APFS and Windows NTFS: names differing only in case or Unicode form are the same entry.
+		name: 'File System Access, case-insensitive',
+		emptyDir: async () => new FsaDir(new FakeDirectoryHandle('vault', { caseInsensitive: true })),
+	},
 	{
 		name: 'IndexedDB',
 		emptyDir: async () => {
@@ -114,6 +119,18 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 				await expect(dir.remove(bad), bad).rejects.toThrow();
 			}
 			expect(await dir.list()).toEqual([]);
+		});
+
+		it('lists a child folder and a sibling file whose name extends it', async () => {
+			const dir = await emptyDir();
+			const a = (await dir.getDir('a', { create: true }))!;
+			await a.writeFile('inner.json', 'x');
+			await dir.writeFile('a.json', 'y');
+			await dir.writeFile('a-b', 'z');
+			await dir.getDir('b', { create: true });
+			const names = (await dir.list()).map(e => `${e.kind}:${e.name}`).sort();
+			expect(names).toEqual(['dir:a', 'dir:b', 'file:a-b', 'file:a.json']);
+			expect(await a.list()).toEqual([{ name: 'inner.json', kind: 'file' }]);
 		});
 
 		it('reads, writes, lists and removes', async () => {
@@ -247,6 +264,98 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 		});
 	});
 
+	describe('names that a file system may treat as equal', () => {
+		const composed = '\u0622ب'; // آب
+		const decomposed = '\u0627\u0653ب'; // the same word, decomposed
+
+		it('rejects creating a name that differs only in case or Unicode form', async () => {
+			const { store } = await setup();
+			await store.createFolder([], 'Foo');
+			await store.createFolder([], composed);
+			await store.createNote(['Foo'], 'Zk');
+			await expect(store.createFolder([], 'foo')).rejects.toThrow(/already exists/);
+			await expect(store.createFolder([], decomposed)).rejects.toThrow(/already exists/);
+			await expect(store.createNote(['Foo'], 'zK')).rejects.toThrow(/already exists/);
+			await store.createFolder([], 'Bar');
+			await expect(store.renameFolder(['Bar'], 'FOO')).rejects.toThrow(/already exists/);
+			expect((await store.loadNote(['Foo', 'Zk'])).title).toBe('Zk');
+		});
+
+		it('renames a note by case only without losing it', async () => {
+			const { store } = await setup();
+			await store.createFolder([], 'f');
+			const note = noteWithFixture(await store.createNote(['f'], 'Zk'));
+			await store.saveNote(['f', 'Zk'], note);
+			expect(await store.renameNote(['f', 'Zk'], 'zk')).toEqual(['f', 'zk']);
+			expect(await store.loadNote(['f', 'zk'])).toEqual({ ...note, title: 'zk' });
+			const folder = (await store.tree()).children[0];
+			expect(folder.kind === 'folder' && folder.children.map(c => c.name)).toEqual(['zk']);
+		});
+
+		it('renames a folder by case only without losing what is inside', async () => {
+			const { store } = await setup();
+			await store.createFolder([], 'Foo');
+			await store.createFolder(['Foo'], 'inner');
+			const a = await store.createNote(['Foo'], 'a');
+			const b = await store.createNote(['Foo', 'inner'], 'b');
+			expect(await store.renameFolder(['Foo'], 'foo')).toEqual(['foo']);
+			expect(await store.loadNote(['foo', 'a'])).toEqual(a);
+			expect(await store.loadNote(['foo', 'inner', 'b'])).toEqual(b);
+			expect((await store.tree()).children.map(c => c.name)).toEqual(['foo']);
+		});
+
+		it('renames a decomposed Persian name to its composed form without losing it', async () => {
+			const { root, store } = await setup();
+			const note = await store.createNote([], 'x');
+			// A file made outside Metis, with a decomposed name.
+			const notes = (await root.getDir('notes'))!;
+			await notes.writeFile(`${decomposed}.metis.json`, JSON.stringify({ ...note, fileId: 'other' }));
+			await notes.getDir(decomposed, { create: true });
+			await store.createNote([decomposed], 'inside');
+
+			expect(await store.renameNote([decomposed], composed)).toEqual([composed]);
+			expect((await store.loadNote([composed])).fileId).toBe('other');
+			expect(await store.renameFolder([decomposed], composed)).toEqual([composed]);
+			expect((await store.loadNote([composed, 'inside'])).title).toBe('inside');
+			const names = (await store.tree()).children.map(c => c.name);
+			expect(names.filter(n => n.normalize('NFC') === composed)).toHaveLength(2); // the folder and the note
+			expect(names).not.toContain(decomposed);
+		});
+
+		it('keeps ZWNJ in folder and note names', async () => {
+			const { store } = await setup();
+			await store.createFolder([], 'درس‌ها');
+			await store.createNote(['درس‌ها'], 'جلسه‌ی اول');
+			await store.renameFolder(['درس‌ها'], 'کلاس‌ها');
+			expect((await store.loadNote(['کلاس‌ها', 'جلسه‌ی اول'])).title).toBe('جلسه‌ی اول');
+			expect((await store.tree()).children.map(c => c.name)).toEqual(['کلاس‌ها']);
+		});
+	});
+
+	describe('duplicate fileIds', () => {
+		it('reports notes that share a fileId and deletes nothing', async () => {
+			const { root, store } = await setup();
+			await store.createFolder([], 'f');
+			const note = await store.createNote(['f'], 'a');
+			await store.createNote(['f'], 'other');
+			expect(await store.duplicateFileIds()).toEqual([]);
+			// As left behind by a crash between copy and delete.
+			const f = (await walk(root, ['notes', 'f']))!;
+			await f.writeFile('b.metis.json', (await f.readFile('a.metis.json'))!);
+			expect(await store.duplicateFileIds()).toEqual([
+				{
+					fileId: note.fileId,
+					paths: [
+						['f', 'a'],
+						['f', 'b'],
+					],
+				},
+			]);
+			expect(await store.loadNote(['f', 'a'])).toEqual(note);
+			expect((await store.loadNote(['f', 'b'])).fileId).toBe(note.fileId);
+		});
+	});
+
 	describe('derived data (.metis/)', () => {
 		it('round-trips every derived type at the paths of SPEC section 5', async () => {
 			const { root, store } = await setup();
@@ -366,6 +475,9 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 				store.derived.saveTextbook({ ...textbook, authorization: 'Bearer x' } as Textbook),
 			).rejects.toThrow(/secret/);
 			await expect(store.derived.saveSync('f1', { ...sync(1), password: 'x' } as SyncState)).rejects.toThrow();
+			for (const key of ['openaiApiKey', 'x-api-key', 'token', 'apiKeys', 'refreshToken']) {
+				await expect(store.saveNote(['f', 'n'], { ...note, [key]: 'x' }), key).rejects.toThrow(/secret/);
+			}
 			expect(await store.loadNote(['f', 'n'])).toEqual(note);
 		});
 
@@ -376,13 +488,22 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			await store.saveNote(['f', 'n'], note);
 			await writeAllDerived(store, note.fileId);
 			for (const [path, text] of await files(root)) {
-				expect(text, path).not.toMatch(/api[-_]?key|password|authorization|secret/i);
+				expect(text, path).not.toMatch(/api[-_]?key|password|authorization|secret|token|bearer/i);
 			}
 		});
 	});
 });
 
 describe('backends', () => {
+	it('IndexedDB list() never reads file contents', async () => {
+		const db = await openVaultDb('list-test', new IDBFactory());
+		const dir = (await new IdbDir(db).getDir('v', { create: true }))!;
+		await dir.writeFile('big.json', 'x'.repeat(10_000));
+		const transaction = vi.spyOn(db, 'transaction');
+		expect(await dir.list()).toEqual([{ name: 'big.json', kind: 'file' }]);
+		expect(transaction.mock.calls.map(c => c[0])).toEqual(['entries']);
+	});
+
 	it('memoryVault creates an empty vault', async () => {
 		const store = await memoryVault('ZKP');
 		expect(store.meta.name).toBe('ZKP');

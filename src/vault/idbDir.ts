@@ -1,11 +1,14 @@
 // Dir backed by IndexedDB, the fallback when the File System Access API is missing.
-// One object store holds every entry, keyed by its full path ("a/b/c"); names never contain "/".
+// Entries are keyed by their full path ("a/b/c"); names never contain "/".
+// `entries` holds only the kind of each entry, so listing a directory never loads file text;
+// `texts` holds the file contents under the same key.
 
 import { segment, type Dir, type DirEntry } from './dir';
 
-const STORE = 'entries';
+const ENTRIES = 'entries';
+const TEXTS = 'texts';
 
-type Entry = { kind: 'dir' } | { kind: 'file'; text: string };
+type Kind = 'dir' | 'file';
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -23,8 +26,13 @@ function done(tx: IDBTransaction): Promise<void> {
 }
 
 export function openVaultDb(name = 'metis-vaults', factory: IDBFactory = indexedDB): Promise<IDBDatabase> {
-	const open = factory.open(name, 1);
-	open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+	const open = factory.open(name, 2);
+	open.onupgradeneeded = () => {
+		// Version 1 (text stored inline) never shipped in a release; start clean.
+		for (const store of [...open.result.objectStoreNames]) open.result.deleteObjectStore(store);
+		open.result.createObjectStore(ENTRIES);
+		open.result.createObjectStore(TEXTS);
+	};
 	return request(open);
 }
 
@@ -43,55 +51,68 @@ export class IdbDir implements Dir {
 		return this.path ? `${this.path}/${name}` : name;
 	}
 
-	private async get(key: string): Promise<Entry | undefined> {
-		const tx = this.db.transaction(STORE, 'readonly');
-		return request(tx.objectStore(STORE).get(key) as IDBRequest<Entry | undefined>);
+	private async kind(key: string): Promise<Kind | undefined> {
+		const tx = this.db.transaction(ENTRIES, 'readonly');
+		return request(tx.objectStore(ENTRIES).get(key) as IDBRequest<Kind | undefined>);
 	}
 
-	async list(): Promise<DirEntry[]> {
-		const tx = this.db.transaction(STORE, 'readonly');
-		const store = tx.objectStore(STORE);
-		const range = this.path ? below(this.path) : undefined;
-		const [keys, values] = await Promise.all([
-			request(store.getAllKeys(range)),
-			request(store.getAll(range) as IDBRequest<Entry[]>),
-		]);
+	/** Direct children only: the cursor jumps over each child's descendants instead of reading them. */
+	list(): Promise<DirEntry[]> {
+		const tx = this.db.transaction(ENTRIES, 'readonly');
+		const cursor = tx.objectStore(ENTRIES).openCursor(this.path ? below(this.path) : undefined);
 		const prefix = this.path ? this.path.length + 1 : 0;
 		const out: DirEntry[] = [];
-		keys.forEach((key, i) => {
-			const name = String(key).slice(prefix);
-			if (!name.includes('/')) out.push({ name, kind: values[i].kind === 'dir' ? 'dir' : 'file' });
+		return new Promise((resolve, reject) => {
+			cursor.onerror = () => reject(cursor.error);
+			cursor.onsuccess = () => {
+				const c = cursor.result;
+				if (!c) return resolve(out);
+				const key = String(c.key);
+				const slash = key.indexOf('/', prefix);
+				if (slash < 0) {
+					out.push({ name: key.slice(prefix), kind: c.value as Kind });
+					c.continue();
+				} else {
+					// A descendant of a child: skip the rest of that child's subtree.
+					// (Siblings such as "a.json" sort between "a" and "a/...", so the jump happens here.)
+					c.continue(`${key.slice(0, slash)}0`);
+				}
+			};
 		});
-		return out;
 	}
 
 	async readFile(name: string): Promise<string | undefined> {
-		const entry = await this.get(this.key(name));
-		if (entry?.kind === 'dir') throw new Error(`not a file: ${name}`);
-		return entry?.text;
+		const key = this.key(name);
+		const tx = this.db.transaction([ENTRIES, TEXTS], 'readonly');
+		const [kind, text] = await Promise.all([
+			request(tx.objectStore(ENTRIES).get(key) as IDBRequest<Kind | undefined>),
+			request(tx.objectStore(TEXTS).get(key) as IDBRequest<string | undefined>),
+		]);
+		if (kind === 'dir') throw new Error(`not a file: ${name}`);
+		return kind === 'file' ? text : undefined;
 	}
 
 	async writeFile(name: string, text: string): Promise<void> {
 		const key = this.key(name);
-		const tx = this.db.transaction(STORE, 'readwrite');
-		const store = tx.objectStore(STORE);
-		const existing = (await request(store.get(key))) as Entry | undefined;
-		if (existing?.kind === 'dir') {
+		const tx = this.db.transaction([ENTRIES, TEXTS], 'readwrite');
+		const entries = tx.objectStore(ENTRIES);
+		if ((await request(entries.get(key))) === 'dir') {
 			tx.abort();
 			throw new Error(`not a file: ${name}`);
 		}
-		store.put({ kind: 'file', text } satisfies Entry, key);
+		entries.put('file' satisfies Kind, key);
+		tx.objectStore(TEXTS).put(text, key);
 		await done(tx);
 	}
 
 	async getDir(name: string, options: { create?: boolean } = {}): Promise<Dir | undefined> {
 		const key = this.key(name);
-		const entry = await this.get(key);
-		if (entry?.kind === 'file') throw new Error(`not a directory: ${name}`);
-		if (!entry) {
+		const kind = await this.kind(key);
+		if (kind === 'file') throw new Error(`not a directory: ${name}`);
+		if (!kind) {
 			if (!options.create) return undefined;
-			const tx = this.db.transaction(STORE, 'readwrite');
-			tx.objectStore(STORE).put({ kind: 'dir' } satisfies Entry, key);
+			const tx = this.db.transaction(ENTRIES, 'readwrite');
+			tx.objectStore(ENTRIES).put('dir' satisfies Kind, key);
 			await done(tx);
 		}
 		return new IdbDir(this.db, key);
@@ -99,10 +120,11 @@ export class IdbDir implements Dir {
 
 	async remove(name: string): Promise<void> {
 		const key = this.key(name);
-		const tx = this.db.transaction(STORE, 'readwrite');
-		const store = tx.objectStore(STORE);
-		store.delete(key);
-		store.delete(below(key));
+		const tx = this.db.transaction([ENTRIES, TEXTS], 'readwrite');
+		for (const store of [tx.objectStore(ENTRIES), tx.objectStore(TEXTS)]) {
+			store.delete(key);
+			store.delete(below(key));
+		}
 		await done(tx);
 	}
 }

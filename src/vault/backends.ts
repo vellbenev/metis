@@ -3,7 +3,7 @@
 import { MemoryDir, type Dir } from './dir';
 import { FsaDir, type FsaDirectoryHandle } from './fsaDir';
 import { IdbDir, openVaultDb } from './idbDir';
-import { createVault, isVault, openVault, type VaultStore } from './store';
+import { createVault, fold, isVault, openVault, type VaultStore } from './store';
 
 export function memoryVault(name: string): Promise<VaultStore> {
 	return createVault(new MemoryDir(), name);
@@ -39,8 +39,9 @@ export class IdbVaults {
 	}
 
 	async create(name: string): Promise<VaultStore> {
-		const key = name.trim();
-		if ((await this.list()).includes(key)) throw new Error(`a vault named ${key} already exists`);
+		const key = name.trim().normalize('NFC');
+		if ((await this.list()).some(n => fold(n) === fold(key)))
+			throw new Error(`a vault named ${key} already exists`);
 		return createVault((await this.root.getDir(key, { create: true }))!, key);
 	}
 

@@ -8,8 +8,10 @@ export interface FileTreeProps {
 	onOpen(path: VaultPath): void;
 	/** Called after a rename, so an open note can follow its file. */
 	onMoved?(from: VaultPath, to: VaultPath): void | Promise<void>;
-	/** Called before a rename, so pending edits can be saved first. */
+	/** Called before a rename, so pending edits are saved and autosave holds still. */
 	beforeChange?(): void | Promise<void>;
+	/** Called after a rename, whether it succeeded or not. */
+	afterChange?(): void;
 }
 
 type Editing =
@@ -41,12 +43,16 @@ function NameInput(props: { initial: string; label: string; onSubmit(name: strin
 	);
 }
 
-export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: FileTreeProps) {
+export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, afterChange }: FileTreeProps) {
 	const [tree, setTree] = useState<TreeFolder>();
 	const [editing, setEditing] = useState<Editing>();
 	const [error, setError] = useState<string>();
+	const [duplicates, setDuplicates] = useState<{ fileId: string; paths: VaultPath[] }[]>([]);
 
-	const refresh = useCallback(async () => setTree(await store.tree()), [store]);
+	const refresh = useCallback(async () => {
+		setTree(await store.tree());
+		setDuplicates(await store.duplicateFileIds());
+	}, [store]);
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
@@ -68,16 +74,20 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: F
 		void run(async () => {
 			if (current.mode === 'new-folder') await store.createFolder(current.parent, name);
 			else if (current.mode === 'new-note') {
-				await store.createNote(current.parent, name);
-				onOpen([...current.parent, name.trim()]);
+				const note = await store.createNote(current.parent, name);
+				onOpen([...current.parent, note.title]);
 			} else {
 				await beforeChange?.();
-				const { item } = current;
-				const to =
-					item.kind === 'folder'
-						? await store.renameFolder(item.path, name)
-						: await store.renameNote(item.path, name);
-				await onMoved?.(item.path, to);
+				try {
+					const { item } = current;
+					const to =
+						item.kind === 'folder'
+							? await store.renameFolder(item.path, name)
+							: await store.renameNote(item.path, name);
+					await onMoved?.(item.path, to);
+				} finally {
+					afterChange?.();
+				}
 			}
 		});
 	}
@@ -117,6 +127,7 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: F
 							aria-current={same(item.path, activePath) ? 'page' : undefined}
 							onClick={() => onOpen(item.path)}
 							onDoubleClick={rename}
+							dir='auto'
 						>
 							{item.name}
 						</button>
@@ -130,7 +141,7 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: F
 					{renaming ? (
 						input('نام تازه', item.name)
 					) : (
-						<span className='tree-name' onDoubleClick={rename}>
+						<span className='tree-name' dir='auto' onDoubleClick={rename}>
 							{item.name}
 						</span>
 					)}
@@ -147,7 +158,7 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: F
 	return (
 		<nav className='file-tree' aria-label='یادداشت‌ها'>
 			<div className='tree-folder tree-root'>
-				<strong>{store.meta.name}</strong>
+				<strong dir='auto'>{store.meta.name}</strong>
 				{actions([])}
 			</div>
 			<ul>
@@ -159,6 +170,14 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange }: F
 					{error}
 				</p>
 			)}
+			{duplicates.map(d => (
+				<p key={d.fileId} className='tree-error' role='status'>
+					این یادداشت‌ها یک شناسه دارند و یکی از آن‌ها باید پاک شود:{' '}
+					{d.paths.map(p => (
+						<bdi key={key(p)}>{key(p)} </bdi>
+					))}
+				</p>
+			))}
 			<p className='tree-hint'>برای تغییر نام، دو بار کلیک کنید.</p>
 		</nav>
 	);

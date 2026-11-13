@@ -34,6 +34,8 @@ export type TreeItem = TreeNote | TreeFolder;
 export interface NoteReader {
 	tree(): Promise<TreeFolder>;
 	loadNote(path: VaultPath): Promise<RawNote>;
+	/** Notes that share a fileId (e.g. after a crash during a rename). Reported, never fixed silently. */
+	duplicateFileIds(): Promise<{ fileId: string; paths: VaultPath[] }[]>;
 }
 
 export interface DerivedStore {
@@ -75,11 +77,18 @@ async function writeJson(dir: Dir, name: string, value: unknown): Promise<void> 
 
 /** A user-visible folder or note name. Leading dots are reserved (e.g. `.metis`). */
 function userName(name: string): string {
-	const trimmed = typeof name === 'string' ? name.trim() : '';
+	const trimmed = typeof name === 'string' ? name.trim().normalize('NFC') : '';
 	segment(trimmed);
 	if (trimmed.startsWith('.')) throw new Error(`names may not start with ".": ${JSON.stringify(name)}`);
 	return trimmed;
 }
+
+/** How file systems may compare names: case-insensitive (APFS, NTFS) and Unicode-form-insensitive. */
+export function fold(name: string): string {
+	return name.normalize('NFC').toLowerCase();
+}
+
+const tempName = () => `.renaming-${nanoid(8)}`;
 
 function fileId(id: string): string {
 	if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
@@ -155,6 +164,7 @@ function sortItems(items: TreeItem[]): TreeItem[] {
 async function buildTree(dir: Dir, name: string, path: VaultPath): Promise<TreeFolder> {
 	const children: TreeItem[] = [];
 	for (const entry of await dir.list()) {
+		if (entry.name.startsWith('.')) continue; // hidden, e.g. a rename in progress
 		if (entry.kind === 'dir') {
 			const sub = await dir.getDir(entry.name);
 			if (sub) children.push(await buildTree(sub, entry.name, [...path, entry.name]));
@@ -188,18 +198,44 @@ class DirVaultStore implements VaultStore {
 		return [await this.folder(path.slice(0, -1)), path[path.length - 1]];
 	}
 
-	private async exists(dir: Dir, name: string): Promise<boolean> {
-		return (await dir.list()).some(e => e.name === name);
+	/** Name of an entry other than `except` that the file system would treat as `name`. */
+	private async clash(dir: Dir, name: string, except?: string): Promise<string | undefined> {
+		const want = fold(name);
+		return (await dir.list()).find(e => e.name !== except && fold(e.name) === want)?.name;
+	}
+
+	private async refuseClash(dir: Dir, name: string, except?: string): Promise<void> {
+		const other = await this.clash(dir, name, except);
+		if (other !== undefined) throw new Error(`already exists: ${other}`);
 	}
 
 	tree(): Promise<TreeFolder> {
 		return buildTree(this.notes, '', []);
 	}
 
+	async duplicateFileIds(): Promise<{ fileId: string; paths: VaultPath[] }[]> {
+		const byId = new Map<string, VaultPath[]>();
+		const visit = async (item: TreeItem): Promise<void> => {
+			if (item.kind === 'folder') {
+				for (const child of item.children) await visit(child);
+				return;
+			}
+			let id: string;
+			try {
+				id = (await this.loadNote(item.path)).fileId;
+			} catch {
+				return;
+			}
+			byId.set(id, [...(byId.get(id) ?? []), item.path]);
+		};
+		await visit(await this.tree());
+		return [...byId].filter(([, paths]) => paths.length > 1).map(([fileId, paths]) => ({ fileId, paths }));
+	}
+
 	async createFolder(parent: VaultPath, name: string): Promise<VaultPath> {
 		const dir = await this.folder(parent);
 		const clean = userName(name);
-		if (await this.exists(dir, clean)) throw new Error(`already exists: ${clean}`);
+		await this.refuseClash(dir, clean);
 		await dir.getDir(clean, { create: true });
 		return [...parent, clean];
 	}
@@ -210,16 +246,26 @@ class DirVaultStore implements VaultStore {
 		if (!from) throw new Error(`no such folder: ${path.join('/')}`);
 		const clean = userName(name);
 		if (clean === old) return path;
-		if (await this.exists(parent, clean)) throw new Error(`already exists: ${clean}`);
-		await copyInto(from, (await parent.getDir(clean, { create: true }))!);
-		await parent.remove(old);
+		await this.refuseClash(parent, clean, old);
+		if (fold(clean) === fold(old)) {
+			// Case or Unicode-form change only: on a case-insensitive file system the old and new
+			// names are the same entry, so go through a hidden temporary folder.
+			const temp = tempName();
+			await copyInto(from, (await parent.getDir(temp, { create: true }))!);
+			await parent.remove(old);
+			await copyInto((await parent.getDir(temp))!, (await parent.getDir(clean, { create: true }))!);
+			await parent.remove(temp);
+		} else {
+			await copyInto(from, (await parent.getDir(clean, { create: true }))!);
+			await parent.remove(old);
+		}
 		return [...path.slice(0, -1), clean];
 	}
 
 	async createNote(folder: VaultPath, name: string): Promise<RawNote> {
 		const dir = await this.folder(folder);
 		const clean = userName(name);
-		if (await this.exists(dir, clean + NOTE_EXT)) throw new Error(`already exists: ${clean}`);
+		await this.refuseClash(dir, clean + NOTE_EXT);
 		const note: RawNote = {
 			version: 1,
 			fileId: crypto.randomUUID(),
@@ -234,11 +280,21 @@ class DirVaultStore implements VaultStore {
 		const [dir, old] = await this.split(path);
 		const clean = userName(name);
 		if (clean === old) return path;
-		if (await this.exists(dir, clean + NOTE_EXT)) throw new Error(`already exists: ${clean}`);
+		await this.refuseClash(dir, clean + NOTE_EXT, old + NOTE_EXT);
 		const note = await this.loadNote(path);
 		// The fileId stays, so derived data under .metis/ keeps pointing at this note.
-		await writeJson(dir, clean + NOTE_EXT, { ...note, title: clean });
-		await dir.remove(old + NOTE_EXT);
+		const renamed = { ...note, title: clean };
+		if (fold(clean) === fold(old)) {
+			// Same entry on a case-insensitive file system: keep a hidden copy until the new name is written.
+			const temp = tempName();
+			await writeJson(dir, temp, renamed);
+			await dir.remove(old + NOTE_EXT);
+			await writeJson(dir, clean + NOTE_EXT, renamed);
+			await dir.remove(temp);
+		} else {
+			await writeJson(dir, clean + NOTE_EXT, renamed);
+			await dir.remove(old + NOTE_EXT);
+		}
 		return [...path.slice(0, -1), clean];
 	}
 

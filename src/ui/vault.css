@@ -114,3 +114,9 @@
 		border-bottom: 1px solid var(--rule);
 	}
 }
+
+.save-error {
+	font-size: 0.8rem;
+	color: #8a3b22;
+	margin: 0 0 1rem;
+}
