@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanMessages, cleanSystemPrompt } from './clean';
+import { cleanMessages, cleanSystemPrompt, type CleanPromptInput } from './clean';
 
 describe('clean prompt', () => {
 	const prompt = cleanSystemPrompt('structure', 'flag-gaps');
@@ -16,6 +16,13 @@ describe('clean prompt', () => {
 	it('explains the inline Markdown and that code is copied byte for byte', () => {
 		expect(prompt).toContain('`code`, **bold**, *italic*');
 		expect(prompt).toContain('byte for byte');
+	});
+
+	it('lists the batch Latin terms only when there are some, and says each must be kept', () => {
+		const base: CleanPromptInput = { blocks: [{ id: 'a', text: 'prover' }], contextBefore: [], contextAfter: [], rewriteLevel: 'structure', enrichment: 'flag-gaps' };
+		expect(prompt).toContain('Every term listed in "latinTerms" must appear in your output');
+		expect(JSON.parse(cleanMessages({ ...base, latinTerms: ['prover'] })[1].content).latinTerms).toEqual(['prover']);
+		expect(JSON.parse(cleanMessages({ ...base, latinTerms: [] })[1].content)).not.toHaveProperty('latinTerms');
 	});
 
 	it('sends previousRaw and previousClean only when given', () => {

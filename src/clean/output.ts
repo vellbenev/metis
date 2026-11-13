@@ -4,6 +4,7 @@
 
 import type { BlockId, JSONNode } from '../core/blocks';
 import type { Enrichment } from '../provider/types';
+import { missingTerms } from './text';
 
 type Span = { text: string; ai: boolean; gap: boolean; bold: boolean; italic: boolean; code: boolean };
 type Inline = Span[];
@@ -21,12 +22,14 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 const TAGS = ['<gap>', '</gap>', '<ai>', '</ai>'];
 
+type StarMarker = { pos: number; len: number };
+
 /**
  * Splits inline text into spans: <gap> and <ai> tags (not nested), and the simple Markdown the
- * prompt uses (`code`, **bold**, *italic*, backslash escapes). Returns undefined when a bold or
- * italic marker is left open, so the caller can read every `*` literally instead.
+ * prompt uses (`code`, **bold**, *italic*, backslash escapes). A `*` or `**` marker whose position
+ * is in `literal` is read as text. Every marker seen is recorded in `markers`.
  */
-function tokenize(value: string, literalStars: boolean): Inline | undefined {
+function tokenize(value: string, literal: Set<number>, markers: StarMarker[] = []): Inline {
 	const spans: Inline = [];
 	let open: 'gap' | 'ai' | undefined;
 	let bold = false;
@@ -64,15 +67,16 @@ function tokenize(value: string, literalStars: boolean): Inline | undefined {
 			i = m.index + fence.length;
 			continue;
 		}
-		if (c === '*' && !literalStars) {
-			flush();
-			if (value[i + 1] === '*') {
-				bold = !bold;
-				i += 2;
-			} else {
-				italic = !italic;
-				i += 1;
+		if (c === '*') {
+			const len = value[i + 1] === '*' ? 2 : 1;
+			markers.push({ pos: i, len });
+			if (literal.has(i)) buf += value.slice(i, i + len);
+			else {
+				flush();
+				if (len === 2) bold = !bold;
+				else italic = !italic;
 			}
+			i += len;
 			continue;
 		}
 		const tag = TAGS.find(t => value.startsWith(t, i));
@@ -90,12 +94,34 @@ function tokenize(value: string, literalStars: boolean): Inline | undefined {
 	}
 	flush();
 	if (open) throw new Invalid(`unclosed <${open}> tag`);
-	return bold || italic ? undefined : spans;
+	return spans;
+}
+
+/**
+ * Positions of `*` / `**` markers that have no partner and so are plain text. Like Markdown, a
+ * marker can open only before a non-space and close only after a non-space (so `2 * 3` stays text);
+ * a closer pairs with the nearest open marker of the same kind. Only unmatched markers fall back to
+ * text, so a stray `a*b` does not undo the **bold** around it.
+ */
+function unmatchedStars(value: string, markers: StarMarker[]): Set<number> {
+	const literal = new Set<number>();
+	const stacks: Record<number, number[]> = { 1: [], 2: [] };
+	const solid = (ch: string | undefined) => ch !== undefined && !/\s/.test(ch);
+	for (const { pos, len } of markers) {
+		const stack = stacks[len];
+		if (solid(value[pos - 1]) && stack.length > 0) stack.pop();
+		else if (solid(value[pos + len])) stack.push(pos);
+		else literal.add(pos);
+	}
+	for (const pos of [...stacks[1], ...stacks[2]]) literal.add(pos);
+	return literal;
 }
 
 function parseInline(value: unknown, enrichment: Enrichment): Inline {
 	if (typeof value !== 'string') throw new Invalid('text must be a string');
-	const spans = tokenize(value, false) ?? tokenize(value, true)!;
+	const markers: StarMarker[] = [];
+	tokenize(value, new Set(), markers);
+	const spans = tokenize(value, unmatchedStars(value, markers));
 	if (spans.some(s => s.ai) && enrichment !== 'light-add') throw new Invalid('<ai> is not allowed in this mode');
 	if (!spans.some(s => !s.ai && s.text.trim())) throw new Invalid('a block needs text from the notes');
 	return spans;
@@ -146,15 +172,23 @@ function checkCode(blocks: CleanBlockSpec[], inputCode: string[]): void {
 	if (missing.length > 0) throw new Invalid(`inline code must be copied exactly: ${missing.map(c => JSON.stringify(c)).join(', ')}`);
 }
 
+/** Every Latin term of the batch input must still be in the output (SPEC 6.4); see `missingTerms`. */
+function checkTerms(blocks: CleanBlockSpec[], inputTerms: string[]): void {
+	const text = blocks.map(b => ('items' in b ? b.items : [b.text]).map(i => i.map(s => s.text).join('')).join('\n')).join('\n');
+	const missing = missingTerms(text, inputTerms);
+	if (missing.length > 0) throw new Invalid(`Latin terms must be kept as written: ${missing.join(', ')}`);
+}
+
 /**
- * Validates a model reply: schema, source ids from the batch only, no empty output, and every
- * inline code span of the input (`inputCode`) copied exactly.
+ * Validates a model reply: schema, source ids from the batch only, no empty output, every inline
+ * code span of the input (`inputCode`) copied exactly, and every Latin term (`inputTerms`) kept.
  */
 export function parseCleanOutput(
 	content: string,
 	batchIds: BlockId[],
 	enrichment: Enrichment,
 	inputCode: string[] = [],
+	inputTerms: string[] = [],
 ): ParseResult {
 	let data: unknown;
 	try {
@@ -173,6 +207,7 @@ export function parseCleanOutput(
 		const missing = batchIds.filter(id => !covered.has(id));
 		if (missing.length > 0) throw new Invalid(`no output block has source ${missing.map(id => JSON.stringify(id)).join(', ')}`);
 		checkCode(blocks, inputCode);
+		checkTerms(blocks, inputTerms);
 		return { ok: true, blocks };
 	} catch (e) {
 		if (e instanceof Invalid) return { ok: false, error: e.message };

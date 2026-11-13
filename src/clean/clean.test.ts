@@ -479,6 +479,65 @@ describe('validation and retry', () => {
 		});
 	});
 
+	describe('Latin terms of the batch', () => {
+		/** A model that translates the Latin term "prover" away. */
+		const translate = (req: ChatRequest) => echo(req).replaceAll('prover', 'اثبات‌کننده');
+		const termsLine = () => day1()[1]; // prover = ... ، verifier = ...
+
+		it('are listed in the prompt; output that keeps them is accepted', async () => {
+			const withCode: JSONNode = {
+				type: 'paragraph',
+				attrs: { id: 'p2' },
+				content: [
+					{ type: 'text', text: 'verify(x)', marks: [{ type: 'code' }] },
+					{ type: 'text', text: ' در https://example.org' },
+				],
+			};
+			await write([termsLine(), withCode]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: true, modelCalls: 1, failed: [] });
+			expect(payload(mock.calls[0]) as unknown).toMatchObject({ latinTerms: ['prover', 'verifier'] });
+		});
+
+		it('a missing term makes the output invalid; the retry is used when it keeps every term', async () => {
+			mock = createMockProvider((req, i) => (i === 0 ? translate(req) : echo(req)));
+			deps = { ...deps, provider: mock };
+			await write([termsLine()]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: true, modelCalls: 2, failed: [] });
+			expect(mock.calls[1].messages[3].content).toContain('Latin terms must be kept as written: prover');
+			expect(JSON.stringify(await loadClean())).toContain('prover');
+		});
+
+		it('missing twice: the batch is left untouched and reported, and its sync hash is not updated', async () => {
+			await write([termsLine(), para('p2', 'دو')]);
+			await clean();
+			const cleanBefore = await loadClean();
+			const syncBefore = await loadSync();
+
+			mock = createMockProvider(translate);
+			deps = { ...deps, provider: mock };
+			const changed = { ...termsLine(), content: [{ type: 'text', text: `${termsLine().content![0].text} !` }] };
+			await write([changed, para('p2', 'دو')]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: false, modelCalls: 2 });
+			expect(r.failed).toEqual([{ blockIds: ['a1'], error: 'Latin terms must be kept as written: prover' }]);
+			expect(await loadClean()).toEqual(cleanBefore);
+			expect(await loadSync()).toEqual(syncBefore);
+			expect((await loadSync()).blocks.a1.rawHash).toBe(syncBefore.blocks.a1.rawHash);
+		});
+
+		it('a term kept with a Persian suffix, in bold or in another case is accepted', async () => {
+			mock = createMockProvider(req => {
+				const [b] = payload(req).blocks;
+				return JSON.stringify({ blocks: [{ type: 'paragraph', text: '**Prover**‌ها و verifierی', sources: [b.id] }] });
+			});
+			deps = { ...deps, provider: mock };
+			await write([termsLine()]);
+			expect(await clean()).toMatchObject({ changed: true, modelCalls: 1, failed: [] });
+		});
+	});
+
 	it('a failed batch of new blocks writes nothing when nothing else changed', async () => {
 		mock = createMockProvider('{"blocks": []}');
 		deps = { ...deps, provider: mock };
