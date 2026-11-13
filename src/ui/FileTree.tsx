@@ -49,13 +49,14 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, aft
 	const [error, setError] = useState<string>();
 	const [duplicates, setDuplicates] = useState<{ fileId: string; paths: VaultPath[] }[]>([]);
 
-	const refresh = useCallback(async () => {
-		setTree(await store.tree());
-		setDuplicates(await store.duplicateFileIds());
-	}, [store]);
+	const refresh = useCallback(async () => setTree(await store.tree()), [store]);
+	// Reads every note, so it runs only when the vault opens and after a failed change,
+	// which is when a half-done rename can leave two notes with one fileId.
+	const checkDuplicates = useCallback(async () => setDuplicates(await store.duplicateFileIds()), [store]);
 	useEffect(() => {
 		void refresh();
-	}, [refresh]);
+		void checkDuplicates();
+	}, [refresh, checkDuplicates]);
 
 	async function run(action: () => Promise<void>) {
 		setEditing(undefined);
@@ -64,6 +65,7 @@ export function FileTree({ store, activePath, onOpen, onMoved, beforeChange, aft
 			await action();
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
+			await checkDuplicates();
 		}
 		await refresh();
 	}

@@ -83,12 +83,18 @@ function userName(name: string): string {
 	return trimmed;
 }
 
-/** How file systems may compare names: case-insensitive (APFS, NTFS) and Unicode-form-insensitive. */
+/**
+ * How file systems may compare names: case-insensitive (APFS, NTFS) and Unicode-form-insensitive.
+ * An approximation: toLowerCase is close to, but not exactly, the case folding those file systems use.
+ */
 export function fold(name: string): string {
 	return name.normalize('NFC').toLowerCase();
 }
 
-const tempName = () => `.renaming-${nanoid(8)}`;
+// A case-only rename goes through `.renaming.<new name>`; the target is in the name so that an
+// interrupted rename can be finished when the vault is opened again (see recoverRenames).
+const RENAMING = '.renaming.';
+const tempName = (target: string) => RENAMING + target;
 
 function fileId(id: string): string {
 	if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
@@ -250,7 +256,7 @@ class DirVaultStore implements VaultStore {
 		if (fold(clean) === fold(old)) {
 			// Case or Unicode-form change only: on a case-insensitive file system the old and new
 			// names are the same entry, so go through a hidden temporary folder.
-			const temp = tempName();
+			const temp = tempName(clean);
 			await copyInto(from, (await parent.getDir(temp, { create: true }))!);
 			await parent.remove(old);
 			await copyInto((await parent.getDir(temp))!, (await parent.getDir(clean, { create: true }))!);
@@ -286,7 +292,7 @@ class DirVaultStore implements VaultStore {
 		const renamed = { ...note, title: clean };
 		if (fold(clean) === fold(old)) {
 			// Same entry on a case-insensitive file system: keep a hidden copy until the new name is written.
-			const temp = tempName();
+			const temp = tempName(clean + NOTE_EXT);
 			await writeJson(dir, temp, renamed);
 			await dir.remove(old + NOTE_EXT);
 			await writeJson(dir, clean + NOTE_EXT, renamed);
@@ -332,9 +338,39 @@ export async function createVault(root: Dir, name: string, now = Date.now()): Pr
 	return openVault(root);
 }
 
+/**
+ * Finishes case-only renames that were interrupted after the old entry was removed: moves every
+ * `.renaming.<name>` entry to `<name>`, or to a visible `<name> (recovered N)` if `<name>` exists.
+ */
+export async function recoverRenames(dir: Dir): Promise<void> {
+	const entries = await dir.list();
+	for (const entry of entries) {
+		if (entry.kind === 'dir' && !entry.name.startsWith('.')) await recoverRenames((await dir.getDir(entry.name))!);
+	}
+	for (const entry of entries) {
+		if (!entry.name.startsWith(RENAMING) || entry.name.length === RENAMING.length) continue;
+		const target = entry.name.slice(RENAMING.length);
+		const ext = entry.kind === 'file' && target.endsWith(NOTE_EXT) ? NOTE_EXT : '';
+		const base = target.slice(0, target.length - ext.length);
+		const taken = new Set((await dir.list()).map(e => fold(e.name)));
+		let name = target;
+		for (let n = 1; taken.has(fold(name)); n++) name = `${base} (recovered${n > 1 ? ` ${n}` : ''})${ext}`;
+		if (entry.kind === 'file') {
+			const text = await dir.readFile(entry.name);
+			await dir.writeFile(name, text ?? '');
+		} else {
+			const from = await dir.getDir(entry.name);
+			await recoverRenames(from!);
+			await copyInto(from!, (await dir.getDir(name, { create: true }))!);
+		}
+		await dir.remove(entry.name);
+	}
+}
+
 export async function openVault(root: Dir): Promise<VaultStore> {
 	const meta = checkMeta(await readJson<VaultMeta>(root, META_FILE));
 	const notes = (await root.getDir(NOTES_DIR, { create: true }))!;
+	await recoverRenames(notes);
 	const metis = (await root.getDir(DERIVED_DIR, { create: true }))!;
 	return new DirVaultStore(meta, notes, metis);
 }

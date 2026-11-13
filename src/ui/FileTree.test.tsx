@@ -133,4 +133,22 @@ describe('FileTree', () => {
 		expect(warning.textContent).toContain('b');
 		expect(texts('.tree-note')).toEqual(['a', 'b']);
 	});
+
+	it('looks for duplicate fileIds when the vault opens and after a failed change only', async () => {
+		const store = await memoryVault('ZKP');
+		await store.createFolder([], 'f');
+		const check = vi.spyOn(store, 'duplicateFileIds');
+		await render(store);
+		expect(check).toHaveBeenCalledTimes(1);
+
+		await act(async () => button('پوشه‌ی تازه').click());
+		await typeAndSubmit('g');
+		expect(texts('.tree-name')).toEqual(['f', 'g']);
+		expect(check).toHaveBeenCalledTimes(1);
+
+		await act(async () => button('پوشه‌ی تازه').click());
+		await typeAndSubmit('f');
+		expect(host.querySelector('[role=alert]')).not.toBeNull();
+		expect(check).toHaveBeenCalledTimes(2);
+	});
 });

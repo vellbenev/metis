@@ -60,4 +60,29 @@ describe('assertNoSecrets (I5)', () => {
 			}),
 		).not.toThrow();
 	});
+
+	it('treats keys of id-keyed records as data, but still checks what is inside them', () => {
+		const block = { rawHash: 'ab', cleanIds: ['c1'], lastRevision: 1 };
+		const sync = { version: 1, revision: 1, blocks: { xTOKEN9ab_cd: block, aSecret_1234: block } };
+		expect(() => assertNoSecrets(sync)).not.toThrow();
+		const textbook = {
+			version: 1,
+			builtAt: 1,
+			sections: {
+				'access-tokens': { doc: { type: 'doc' }, sourceRevisions: { 'token-file': 1 } },
+			},
+			gaps: [{ sectionId: 'access-tokens', note: 'x' }],
+		};
+		expect(() => assertNoSecrets(textbook)).not.toThrow();
+
+		expect(() => assertNoSecrets({ ...sync, blocks: { id1: { ...block, apiKey: 'x' } } })).toThrow(/secret/);
+		expect(() =>
+			assertNoSecrets({
+				...textbook,
+				sections: { s1: { doc: { type: 'doc' }, sourceRevisions: {}, token: 'x' } },
+			}),
+		).toThrow(/secret/);
+		expect(() => assertNoSecrets({ ...textbook, apiKey: 'x' })).toThrow(/secret/);
+		expect(() => assertNoSecrets({ ...sync, blocks: { sections: { token: 'x' } } })).toThrow(/secret/);
+	});
 });

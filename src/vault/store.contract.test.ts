@@ -332,6 +332,79 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 		});
 	});
 
+	describe('interrupted case-only rename', () => {
+		/** Wraps a Dir tree so that every write fails once something has been removed: a crash after remove(old). */
+		function crashAfterRemove(dir: Dir, state = { removed: false }): Dir {
+			const guard = () => {
+				if (state.removed) throw new Error('crash');
+			};
+			return {
+				list: () => dir.list(),
+				readFile: name => dir.readFile(name),
+				async writeFile(name, text) {
+					guard();
+					await dir.writeFile(name, text);
+				},
+				async getDir(name, options) {
+					if (options?.create && !(await dir.getDir(name))) guard();
+					const child = await dir.getDir(name, options);
+					return child && crashAfterRemove(child, state);
+				},
+				async remove(name) {
+					guard();
+					await dir.remove(name);
+					state.removed = true;
+				},
+			};
+		}
+
+		it('recovers a note when the vault is opened again', async () => {
+			const root = await emptyDir();
+			const setupStore = await createVault(root, 'ZKP');
+			await setupStore.createFolder([], 'f');
+			const note = noteWithFixture(await setupStore.createNote(['f'], 'Zk'));
+			await setupStore.saveNote(['f', 'Zk'], note);
+
+			const crashing = await openVault(crashAfterRemove(root));
+			await expect(crashing.renameNote(['f', 'Zk'], 'zk')).rejects.toThrow('crash');
+
+			const reopened = await openVault(root);
+			expect(await reopened.loadNote(['f', 'zk'])).toEqual({ ...note, title: 'zk' });
+			const folder = (await reopened.tree()).children[0];
+			expect(folder.kind === 'folder' && folder.children.map(c => c.name)).toEqual(['zk']);
+			expect((await (await walk(root, ['notes', 'f']))!.list()).map(e => e.name)).toEqual(['zk.metis.json']);
+		});
+
+		it('recovers a folder with everything inside it', async () => {
+			const root = await emptyDir();
+			const setupStore = await createVault(root, 'ZKP');
+			await setupStore.createFolder([], 'Foo');
+			await setupStore.createFolder(['Foo'], 'inner');
+			const a = await setupStore.createNote(['Foo'], 'a');
+			const b = await setupStore.createNote(['Foo', 'inner'], 'b');
+
+			const crashing = await openVault(crashAfterRemove(root));
+			await expect(crashing.renameFolder(['Foo'], 'foo')).rejects.toThrow('crash');
+
+			const reopened = await openVault(root);
+			expect(await reopened.loadNote(['foo', 'a'])).toEqual(a);
+			expect(await reopened.loadNote(['foo', 'inner', 'b'])).toEqual(b);
+			expect((await reopened.tree()).children.map(c => c.name)).toEqual(['foo']);
+		});
+
+		it('keeps a leftover visible under a new name when its target exists again', async () => {
+			const { root, store } = await setup();
+			const note = await store.createNote([], 'zk');
+			const notes = (await root.getDir('notes'))!;
+			const orphan = { ...note, fileId: 'orphan' };
+			await notes.writeFile('.renaming.zk.metis.json', JSON.stringify(orphan));
+			const reopened = await openVault(root);
+			expect((await reopened.tree()).children.map(c => c.name)).toEqual(['zk', 'zk (recovered)']);
+			expect(await reopened.loadNote(['zk'])).toEqual(note);
+			expect((await reopened.loadNote(['zk (recovered)'])).fileId).toBe('orphan');
+		});
+	});
+
 	describe('duplicate fileIds', () => {
 		it('reports notes that share a fileId and deletes nothing', async () => {
 			const { root, store } = await setup();
@@ -481,6 +554,23 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			expect(await store.loadNote(['f', 'n'])).toEqual(note);
 		});
 
+		it('saves derived data whose ids happen to contain secret-like words', async () => {
+			const { store } = await setup();
+			const state: SyncState = {
+				version: 1,
+				revision: 1,
+				blocks: { xTOKEN9ab_cd: { rawHash: 'ab', cleanIds: ['secret_abcde'], lastRevision: 1 } },
+			};
+			await store.derived.saveSync('f1', state);
+			expect(await store.derived.loadSync('f1')).toEqual(state);
+			const book: Textbook = {
+				...textbook,
+				sections: { 'access-tokens': { doc: { type: 'doc', content: [] }, sourceRevisions: { f1: 1 } } },
+			};
+			await store.derived.saveTextbook(book);
+			expect(await store.derived.loadTextbook()).toEqual(book);
+		});
+
 		it('a full workflow leaves no secret-looking key in any vault file', async () => {
 			const { root, store } = await setup();
 			await store.createFolder([], 'f');
@@ -488,7 +578,9 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			await store.saveNote(['f', 'n'], note);
 			await writeAllDerived(store, note.fileId);
 			for (const [path, text] of await files(root)) {
-				expect(text, path).not.toMatch(/api[-_]?key|password|authorization|secret|token|bearer/i);
+				expect(text, path).not.toMatch(
+					/"[^"]*(api[-_]?key|password|authorization|secret|token|bearer)[^"]*":/i,
+				);
 			}
 		});
 	});
