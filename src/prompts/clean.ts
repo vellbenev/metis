@@ -6,8 +6,10 @@ import type { RewriteLevel } from '../vault/types';
 
 export interface CleanPromptBlock {
 	id: BlockId;
-	/** The normalised raw text of the block. */
+	/** The normalised raw text of the block, inline formatting as simple Markdown. */
 	text: string;
+	/** For a changed block that was cleaned before: its normalised raw text at that clean. */
+	previousRaw?: string;
 	/** For a changed block that was cleaned before: its previous clean text. */
 	previousClean?: string;
 }
@@ -43,10 +45,12 @@ export function cleanSystemPrompt(rewriteLevel: RewriteLevel, enrichment: Enrich
 		`- Rewrite level ${LEVELS[rewriteLevel]}`,
 		'- Write semi-formal Persian; turn colloquial speech into clean written Persian without changing the meaning.',
 		'- Keep Latin technical terms in Latin exactly as written (for example zk-SNARK, prover); never translate or transliterate them.',
-		'- Use correct ZWNJ (نیم‌فاصله), for example می‌رود, کتاب‌ها.',
+		'- Leave URLs, code and digits exactly as written; never change, translate or convert them.',
+		'- Use correct ZWNJ (نیم‌فاصله), for example می‌رود, کتاب‌ها. Join ای, ام, ات, اش with ZWNJ only where they are suffixes of the word before (خانه‌ای, خسته‌ام, خانه‌ات, خانه‌اش); keep them separate where they are words of their own (for example the vocative ای in ای خدا).',
+		'- Inline formatting is simple Markdown: `code`, **bold**, *italic*; a backslash escapes a literal \\, ` or *. Keep this formatting in your output, and copy every `code` span byte for byte.',
 		'- Wrap any unclear or incomplete part of the notes in <gap>...</gap> instead of guessing what was meant.',
 		`- ${ENRICHMENT[enrichment]}`,
-		'- A block with "previousClean" was cleaned before and the user edited it since: keep the wording of previousClean for every part that did not change.',
+		'- A block with "previousClean" was cleaned before and the user edited it since. "previousRaw" (when present) is its text at that time and "previousClean" is how it was cleaned: compare "previousRaw" with "text", and keep the wording of previousClean for every part that did not change.',
 		'- "contextBefore" and "contextAfter" are already-cleaned neighbouring blocks. Read them for context only; never output them.',
 		'Input: a JSON object with "blocks" (each with "id" and "text"), "contextBefore" and "contextAfter".',
 		'Output: only a JSON object {"blocks": [...]}, no other text. Each output block is one of:',
@@ -60,7 +64,12 @@ export function cleanSystemPrompt(rewriteLevel: RewriteLevel, enrichment: Enrich
 
 export function cleanMessages(input: CleanPromptInput): ChatMessage[] {
 	const payload = {
-		blocks: input.blocks.map(b => (b.previousClean === undefined ? { id: b.id, text: b.text } : b)),
+		blocks: input.blocks.map(b => ({
+			id: b.id,
+			text: b.text,
+			...(b.previousRaw === undefined ? {} : { previousRaw: b.previousRaw }),
+			...(b.previousClean === undefined ? {} : { previousClean: b.previousClean }),
+		})),
 		contextBefore: input.contextBefore,
 		contextAfter: input.contextAfter,
 	};

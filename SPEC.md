@@ -49,8 +49,9 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
   block's type in place keeps its id. On paste, a block whose id already exists in the document gets a new id
   (copy-paste); otherwise it keeps its id (cut-paste is a move). IDs survive save/load round trips. No id appears twice
   in the same note (cut-paste and undo may bring back a previously deleted id).
-- **I3 Incremental**: a raw block whose hash is unchanged since last sync causes zero model calls and its clean block
-  stays byte-identical. Tested with a mock provider that counts calls.
+- **I3 Incremental**: a clean block is regenerated only if at least one of its source raw blocks changed (new hash) or
+  was deleted. A raw block whose hash is unchanged and that shares no clean block with a changed or deleted block causes
+  zero model calls and its clean block stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
   mark and are visually distinct until accepted.
 - **I5 No secrets in vaults**: API keys live only in browser storage, never in any file under a vault.
@@ -94,7 +95,9 @@ interface SyncState {
 	// .metis/sync/<fileId>.json
 	version: 1;
 	revision: number; // +1 per successful clean
-	blocks: Record<BlockId, { rawHash: string; cleanIds: BlockId[]; lastRevision: number }>;
+	blocks: Record<BlockId, { rawHash: string; rawText?: string; cleanIds: BlockId[]; lastRevision: number }>;
+	// rawText: the normalised raw text (as sent to the model) at the last clean of that block. States written before
+	// it existed lack it; they are read as "no previous raw text", and an unchanged block keeps its entry as is.
 }
 
 interface CleanNote {
@@ -142,20 +145,30 @@ Storage rules:
 
 - Arabic `ي`→`ی`, `ك`→`ک`; Arabic-Indic digits `٠-٩`→Persian `۰-۹`; Latin digits are left alone.
 - Remove tatweel; collapse repeated spaces; normalise Persian punctuation (`،` `؛` `؟`) only in Persian runs.
-- ZWNJ (نیم‌فاصله): `می رود`→`می‌رود`, `نمی رود`→`نمی‌رود`, `کتاب ها`→`کتاب‌ها`, common suffixes (`ها`, `تر`, `ترین`,
-  `ای`, `ام`, `ات`, `اش`, ...).
+- ZWNJ (نیم‌فاصله), unambiguous forms only: prefixes `می` / `نمی` (`می رود`→`می‌رود`) and suffixes `ها` / `های` /
+  `هایی`, `تر` / `ترین` (`کتاب ها`→`کتاب‌ها`). `ای`, `ام`, `ات`, `اش` are never joined here (they can be words of
+  their own, e.g. vocative `ای`); the clean prompt handles them.
 - Never modify Latin text, URLs, or code spans.
+- Known gap: a ZWNJ join across two text nodes (e.g. a word and a bold `ها`) is not made.
 
 ### 6.2 Steps
 
 1. Normalise a copy of the raw doc.
-2. Hash every non-empty top-level raw block (empty blocks are skipped) and compare with `SyncState`: classify `new`,
-   `changed`, `unchanged`, `deleted`.
-3. Group adjacent new/changed blocks into batches. Include up to N neighbouring clean blocks as read-only context.
-4. Call the `clean` provider profile. Expected output: JSON array of clean blocks, each with `sources: BlockId[]` (ids
+2. Hash every non-empty top-level raw block (empty block = a paragraph with no content, section 3) and compare with
+   `SyncState`: classify `new`, `changed`, `unchanged`, `deleted`. Unchanged blocks that share a clean block with a
+   changed or deleted block are re-cleaned too (I3).
+3. Code blocks and blocks without text (horizontal rule, image, ...) are copied to the clean twin as they are, with no
+   model call. Group the other new/changed blocks: adjacent blocks form a batch of at most 8 (default); raw blocks that
+   share a clean block always go in the same batch, even if not adjacent or over the cap. Include up to 2 (default)
+   neighbouring clean blocks on each side as read-only context.
+4. Call the `clean` provider profile with the vault's default rewrite level (no per-file override yet). Inline code,
+   bold and italic are sent as simple Markdown (`` `code` ``, `**bold**`, `*italic*`) and restored as marks. Expected
+   output: `{"blocks": [...]}` (a bare array is also accepted) of clean blocks, each with `sources: BlockId[]` (ids
    from the batch only).
-5. Validate (schema, source ids exist, no empty output). Retry once on invalid output; on second failure leave that
-   batch untouched and report it.
+5. Validate (schema, source ids exist, every batch block is a source of some output block, no empty output, every
+   input inline code span copied byte-identical; an invented code span becomes plain text). Retry once on invalid
+   output; on second failure leave that batch untouched and report it. A provider error (network, auth, ...) aborts
+   the whole run and writes nothing.
 6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
    their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean
    block is just reordered; final order follows raw order.
@@ -171,8 +184,10 @@ Storage rules:
 ### 6.4 Clean prompt rules (src/prompts/clean.ts)
 
 - Be faithful: never add claims the user did not make.
-- For a `changed` block that was cleaned before, the model also receives the previous raw text and the previous clean
-  text and must keep the wording of the parts that did not change (no churn).
+- For a `changed` block that was cleaned before, the model also receives the previous raw text (`SyncState.rawText`,
+  when stored) and the previous clean text and must keep the wording of the parts that did not change (no churn).
+- Leave URLs, code and digits unchanged. Keep the inline Markdown; copy `code` spans byte for byte.
+- Join `ای`, `ام`, `ات`, `اش` with ZWNJ only where they are suffixes (not the vocative `ای`).
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
 - Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them.
 - Unclear or incomplete notes: wrap the span in a `gap` mark; never guess.

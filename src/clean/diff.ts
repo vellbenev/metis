@@ -88,29 +88,90 @@ export function affectedIds(diff: BlockDiff, sync: SyncState | undefined): Set<B
 }
 
 export interface Batch {
-	/** Adjacent raw blocks, in raw order, sent to the model together. */
+	/** Raw blocks, in raw order, sent to the model together (adjacent, unless they share a clean block). */
 	blocks: RawBlock[];
 	/** Index in `diff.blocks` of the first and last block of the batch. */
 	start: number;
 	end: number;
 }
 
-/** Groups adjacent affected blocks into batches. Verbatim blocks and unaffected blocks split batches. */
-export function makeBatches(blocks: RawBlock[], affected: Set<BlockId>, maxBlocks: number): Batch[] {
-	const batches: Batch[] = [];
-	let current: Batch | undefined;
+/** Union-find over string keys; `find` returns a group's representative. */
+function unionFind() {
+	const parent = new Map<string, string>();
+	const find = (x: string): string => {
+		while (parent.has(x)) x = parent.get(x)!;
+		return x;
+	};
+	const union = (a: string, b: string) => {
+		const [ra, rb] = [find(a), find(b)];
+		if (ra !== rb) parent.set(ra, rb);
+	};
+	return { find, union };
+}
+
+/**
+ * Groups affected blocks into batches. Adjacent affected blocks form a run; verbatim and unaffected
+ * blocks end a run. Raw blocks that share a clean block (in the last SyncState) always land in the
+ * same batch, even when they are not adjacent, so a shared clean block is replaced all at once or
+ * not at all. A batch is split after `maxBlocks` blocks, but never between blocks that share a clean
+ * block, so such a batch may be longer than `maxBlocks`.
+ */
+export function makeBatches(blocks: RawBlock[], affected: Set<BlockId>, maxBlocks: number, sync?: SyncState): Batch[] {
+	// Raw blocks sharing a clean block, transitively.
+	const shared = unionFind();
+	const ownerOf = new Map<BlockId, BlockId>();
+	for (const [rawId, entry] of Object.entries(sync?.blocks ?? {})) {
+		for (const cleanId of entry.cleanIds) {
+			const owner = ownerOf.get(cleanId);
+			if (owner === undefined) ownerOf.set(cleanId, rawId);
+			else shared.union(rawId, owner);
+		}
+	}
+
+	// Runs of adjacent affected blocks (as indices into `blocks`), merged when they share a group.
+	const runs: number[][] = [];
+	let current: number[] | undefined;
 	blocks.forEach((b, i) => {
-		const join = affected.has(b.id) && !isVerbatimBlock(b.block);
-		if (!join) {
+		if (!affected.has(b.id) || isVerbatimBlock(b.block)) {
 			current = undefined;
 			return;
 		}
-		if (!current || current.blocks.length >= maxBlocks) {
-			current = { blocks: [], start: i, end: i };
-			batches.push(current);
-		}
-		current.blocks.push(b);
-		current.end = i;
+		if (!current) runs.push((current = []));
+		current.push(i);
 	});
-	return batches;
+	const merged = unionFind();
+	const runOfGroup = new Map<string, number>();
+	runs.forEach((run, r) => {
+		for (const i of run) {
+			const group = shared.find(blocks[i].id);
+			const other = runOfGroup.get(group);
+			if (other === undefined) runOfGroup.set(group, r);
+			else merged.union(String(r), String(other));
+		}
+	});
+	const byRoot = new Map<string, number[]>();
+	runs.forEach((run, r) => {
+		const root = merged.find(String(r));
+		byRoot.set(root, [...(byRoot.get(root) ?? []), ...run]);
+	});
+
+	const batches: Batch[] = [];
+	for (const indices of [...byRoot.values()].map(ix => ix.sort((a, b) => a - b)).sort((a, b) => a[0] - b[0])) {
+		// The last position of each group, to know where a cut would separate a group.
+		const last = new Map<string, number>();
+		indices.forEach((i, p) => last.set(shared.find(blocks[i].id), p));
+		let chunk: number[] = [];
+		let openUntil = -1;
+		const close = () => {
+			if (chunk.length > 0) batches.push({ blocks: chunk.map(i => blocks[i]), start: chunk[0], end: chunk[chunk.length - 1] });
+			chunk = [];
+		};
+		indices.forEach((i, p) => {
+			if (chunk.length >= maxBlocks && openUntil < p) close();
+			chunk.push(i);
+			openUntil = Math.max(openUntil, last.get(shared.find(blocks[i].id))!);
+		});
+		close();
+	}
+	return batches.sort((a, b) => a.start - b.start);
 }

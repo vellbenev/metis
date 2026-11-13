@@ -26,7 +26,15 @@ export interface RawNote {
 export interface SyncState {
 	version: 1;
 	revision: number; // +1 per successful clean
-	blocks: Record<BlockId, { rawHash: string; cleanIds: BlockId[]; lastRevision: number }>;
+	blocks: Record<BlockId, SyncBlock>;
+}
+
+export interface SyncBlock {
+	rawHash: string;
+	/** The normalised raw text last sent to (or copied by) the clean; absent in states written before it existed. */
+	rawText?: string;
+	cleanIds: BlockId[];
+	lastRevision: number;
 }
 
 /** .metis/clean/<fileId>.json */

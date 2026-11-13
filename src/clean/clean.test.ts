@@ -163,17 +163,39 @@ describe('block diff and splice', () => {
 		mock.reset();
 	});
 
-	it('a changed block is the only one sent, with its previous clean text', async () => {
+	it('stores the normalised raw text of each block in the SyncState', async () => {
+		expect((await loadSync()).blocks.p2).toMatchObject({ rawText: 'دو' });
+		await write([para('p1', 'یک'), para('p2', 'كتاب ها'), para('p3', 'سه'), para('p4', 'چهار')]);
+		await clean();
+		expect((await loadSync()).blocks.p2.rawText).toBe('کتاب‌ها');
+	});
+
+	it('a changed block is the only one sent, with its previous raw and clean text', async () => {
 		const before = await loadClean();
 		await write([para('p1', 'یک'), para('p2', 'دو و نیم'), para('p3', 'سه'), para('p4', 'چهار')]);
 		await clean();
 		expect(sentIds(mock)).toEqual(['p2']);
-		expect(payload(mock.calls[0]).blocks[0]).toEqual({ id: 'p2', text: 'دو و نیم', previousClean: 'پاک: دو' });
+		expect(payload(mock.calls[0]).blocks[0]).toEqual({ id: 'p2', text: 'دو و نیم', previousRaw: 'دو', previousClean: 'پاک: دو' });
 		expect(payload(mock.calls[0]).contextBefore).toEqual(['پاک: یک']);
 		expect(payload(mock.calls[0]).contextAfter).toEqual(['پاک: سه', 'پاک: چهار']);
 		const after = await loadClean();
 		expect(cleanFor(after, 'p2')[0].content![0].text).toBe('پاک: دو و نیم');
 		for (const id of ['p1', 'p3', 'p4']) expect(cleanFor(after, id)).toEqual(cleanFor(before, id));
+	});
+
+	it('a SyncState without rawText (older format) still works: no previousRaw, unchanged blocks untouched', async () => {
+		const old = await loadSync();
+		for (const entry of Object.values(old.blocks)) delete entry.rawText;
+		await vault.derived.saveSync(fileId, old);
+		const before = await loadClean();
+		expect(await clean()).toMatchObject({ changed: false, modelCalls: 0 }); // I3 with an old state
+		await write([para('p1', 'یک'), para('p2', 'دو و نیم'), para('p3', 'سه'), para('p4', 'چهار')]);
+		await clean();
+		expect(payload(mock.calls[0]).blocks).toEqual([{ id: 'p2', text: 'دو و نیم', previousClean: 'پاک: دو' }]);
+		const sync = await loadSync();
+		expect(sync.blocks.p2.rawText).toBe('دو و نیم');
+		expect(sync.blocks.p1).toEqual(old.blocks.p1);
+		for (const id of ['p1', 'p3', 'p4']) expect(cleanFor(await loadClean(), id)).toEqual(cleanFor(before, id));
 	});
 
 	it('a moved block causes no model call; its clean block is only reordered', async () => {
@@ -252,11 +274,122 @@ describe('clean blocks with several sources', () => {
 		expect((await loadClean()).doc.content![0].content![0].text).toBe('یک + دو! + سه');
 	});
 
+	it('blocks that share a clean block are never split across batches by maxBatchBlocks', async () => {
+		await write([para('p1', 'یک'), para('p2', 'دو!'), para('p3', 'سه')]);
+		await clean({ maxBatchBlocks: 1 });
+		expect(mock.calls.map(c => payload(c).blocks.map(b => b.id))).toEqual([['p1', 'p2', 'p3']]);
+	});
+
+	it('a failed batch of blocks sharing a clean block leaves that clean block once, untouched', async () => {
+		const before = await loadClean();
+		const syncBefore = await loadSync();
+		mock = createMockProvider('not json');
+		deps = { ...deps, provider: mock };
+		await write([para('p1', 'یک!'), para('p2', 'دو'), para('p3', 'سه!')]);
+		const r = await clean({ maxBatchBlocks: 1 });
+		expect(r).toMatchObject({ changed: false, modelCalls: 2 });
+		expect(r.failed).toEqual([{ blockIds: ['p1', 'p2', 'p3'], error: 'not valid JSON' }]);
+		expect(await loadClean()).toEqual(before);
+		expect(await loadSync()).toEqual(syncBefore);
+	});
+
 	it('deleting one source re-cleans the others', async () => {
 		await write([para('p1', 'یک'), para('p3', 'سه')]);
 		await clean();
 		expect(sentIds(mock)).toEqual(['p1', 'p3']);
 		expect((await loadClean()).doc.content![0].content![0].text).toBe('یک + سه');
+	});
+});
+
+describe('non-adjacent blocks that share a clean block', () => {
+	/** Merges p1 and p3 into one clean block; every other block gets its own. */
+	const mergeOuter = (req: ChatRequest) => {
+		const blocks = payload(req).blocks;
+		const outer = blocks.filter(b => b.id === 'p1' || b.id === 'p3');
+		const rest = blocks.filter(b => !outer.includes(b));
+		return JSON.stringify({
+			blocks: [
+				...(outer.length ? [{ type: 'paragraph', text: outer.map(b => b.text).join(' + '), sources: outer.map(b => b.id) }] : []),
+				...rest.map(b => ({ type: 'paragraph', text: `پاک: ${b.text}`, sources: [b.id] })),
+			],
+		});
+	};
+
+	beforeEach(async () => {
+		mock = createMockProvider(mergeOuter);
+		deps = { ...deps, provider: mock };
+		await write([para('p1', 'یک'), para('p2', 'دو'), para('p3', 'سه')]);
+		await clean();
+		mock.reset();
+	});
+
+	it('go in one batch; the unchanged block between them is not sent', async () => {
+		await write([para('p1', 'یک!'), para('p2', 'دو'), para('p3', 'سه')]);
+		await clean();
+		expect(mock.calls.map(c => payload(c).blocks.map(b => b.id))).toEqual([['p1', 'p3']]);
+		const c = await loadClean();
+		expect(c.doc.content!.map(n => n.content![0].text)).toEqual(['یک! + سه', 'پاک: دو']);
+	});
+});
+
+// ---- inline formatting -------------------------------------------------------------------------
+
+describe('inline code, bold and italic', () => {
+	const rich = (id: string): JSONNode => ({
+		type: 'paragraph',
+		attrs: { id },
+		content: [
+			{ type: 'text', text: 'تابع ' },
+			{ type: 'text', text: 'hash(x)  *  ي', marks: [{ type: 'code' }] },
+			{ type: 'text', text: ' را ' },
+			{ type: 'text', text: 'حتما', marks: [{ type: 'bold' }] },
+			{ type: 'text', text: ' ببین ' },
+			{ type: 'text', text: 'prover', marks: [{ type: 'italic' }] },
+			{ type: 'text', text: ' و a*b' },
+		],
+	});
+	const marksOf = (n: JSONNode) => n.marks!.map(m => m.type).filter(t => t !== 'rewrite');
+
+	it('are sent as simple Markdown and restored as marks; inline code comes back byte-identical', async () => {
+		await write([rich('p1')]);
+		await clean();
+		expect(payload(mock.calls[0]).blocks[0].text).toBe('تابع `hash(x)  *  ي` را **حتما** ببین *prover* و a\\*b');
+		const nodes = (await loadClean()).doc.content![0].content!;
+		expect(nodes.map(n => [n.text, marksOf(n)])).toEqual([
+			['پاک: تابع ', []],
+			['hash(x)  *  ي', ['code']],
+			[' را ', []],
+			['حتما', ['bold']],
+			[' ببین ', []],
+			['prover', ['italic']],
+			[' و a*b', []],
+		]);
+		for (const n of nodes) expect(n.marks![0].type).toBe('rewrite'); // I4 kept
+	});
+
+	it('output that alters inline code is invalid; the retry must copy it exactly', async () => {
+		mock = createMockProvider((req, i) =>
+			i === 0 ? echo(req).replace('hash(x)  *  ي', 'hash(x) * ی') : echo(req),
+		);
+		deps = { ...deps, provider: mock };
+		await write([rich('p1')]);
+		const r = await clean();
+		expect(r).toMatchObject({ changed: true, modelCalls: 2, failed: [] });
+		expect(mock.calls[1].messages[3].content).toContain('inline code');
+		const code = (await loadClean()).doc.content![0].content!.filter(n => n.marks!.some(m => m.type === 'code'));
+		expect(code.map(n => n.text)).toEqual(['hash(x)  *  ي']);
+	});
+
+	it('a code span the model invents is kept as plain text', async () => {
+		mock = createMockProvider(req =>
+			JSON.stringify({ blocks: [{ type: 'paragraph', text: 'واژه `prover` اینجا', sources: [payload(req).blocks[0].id] }] }),
+		);
+		deps = { ...deps, provider: mock };
+		await write([para('p1', 'واژه prover اینجا')]);
+		await clean();
+		const nodes = (await loadClean()).doc.content![0].content!;
+		expect(nodes.every(n => !n.marks!.some(m => m.type === 'code'))).toBe(true);
+		expect(nodes.map(n => n.text).join('')).toBe('واژه prover اینجا');
 	});
 });
 

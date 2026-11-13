@@ -15,7 +15,9 @@ const latinAlnum = /^[A-Za-z0-9]$/;
 /** Spans left exactly as they are: URLs and `code`. */
 const PROTECTED = /(?:https?:\/\/|www\.)\S+|`[^`]*`/gu;
 
-const SUFFIXES = ['هایی', 'های', 'ها', 'ترین', 'تر', 'ای', 'ام', 'ات', 'اش'];
+// Only unambiguous forms. ای, ام, ات, اش are also words of their own (vocative ای, ...), so joining
+// them is left to the clean prompt.
+const SUFFIXES = ['هایی', 'های', 'ها', 'ترین', 'تر'];
 // The prefix must be a whole word (no letter or ZWNJ right before it), followed by spaces and a Persian letter.
 const PREFIX_MI = new RegExp(`(?<![\\p{L}\\u200C])(ن?می) +(?=${FA_LETTER})`, 'gu');
 // A Persian word, spaces, then a suffix that ends the word.
