@@ -1,0 +1,71 @@
+:root {
+	--paper: #f5ecd3;
+	--ink: #2b2417;
+	--ink-soft: #6b5d43;
+	--rule: #dccfae;
+	--code-bg: #ece0bf;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: 'Vazirmatn', sans-serif;
+	font-size: 18px;
+	line-height: 1.9;
+}
+
+.page {
+	max-width: 46rem;
+	margin: 0 auto;
+	padding: 3rem 1rem;
+}
+
+.metis-editor {
+	direction: rtl;
+	text-align: right;
+	outline: none;
+	min-height: 70vh;
+}
+
+.metis-editor h1,
+.metis-editor h2,
+.metis-editor h3 {
+	line-height: 1.5;
+}
+
+.metis-editor blockquote {
+	margin: 0;
+	padding-inline-start: 1rem;
+	border-inline-start: 3px solid var(--rule);
+	color: var(--ink-soft);
+}
+
+.metis-editor pre,
+.metis-editor code {
+	direction: ltr;
+	unicode-bidi: isolate;
+	font-family: ui-monospace, monospace;
+	background: var(--code-bg);
+	border-radius: 4px;
+}
+
+.metis-editor pre {
+	padding: 0.75rem 1rem;
+	text-align: left;
+	overflow-x: auto;
+}
+
+.metis-editor code {
+	padding: 0 0.25em;
+}
+
+.metis-editor pre code {
+	padding: 0;
+	background: none;
+}
