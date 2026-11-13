@@ -30,7 +30,9 @@ describe('no secrets in vaults (I5)', () => {
 	});
 
 	it('API keys are handled only by settings and provider code', () => {
-		const offenders = app.filter(f => /apiKey/i.test(f.text) && !/^(settings|provider)\//.test(f.path));
+		// vault/secrets.ts is the I5 guard: it only lists secret-looking key names so the vault can refuse them.
+		const allowed = (path: string) => /^(settings|provider)\//.test(path) || path === 'vault/secrets.ts';
+		const offenders = app.filter(f => /apiKey/i.test(f.text) && !allowed(f.path));
 		expect(offenders.map(f => f.path)).toEqual([]);
 	});
 });
