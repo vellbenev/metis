@@ -82,7 +82,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 	const storedClean = await derived.loadClean(fileId);
 	const [prevSync, prevClean] = storedSync && storedClean ? [storedSync, storedClean] : [undefined, undefined];
 
-	const revision = (prevSync?.revision ?? 0) + 1;
+	const revision = await nextRevision(derived, fileId, prevSync?.revision, prevClean?.revision);
 	const cleanById = new Map((prevClean?.doc.content ?? []).map(n => [n.attrs?.id as BlockId, n]));
 
 	const diff = await diffBlocks(note.doc, prevSync);
@@ -190,23 +190,51 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 
 	const clean: CleanNote = { version: 1, fileId, revision, doc: { type: 'doc', content } };
 	const sync: SyncState = { version: 1, revision, blocks };
+	await derived.saveLastRevision(fileId, revision);
 	await derived.saveSnapshot(fileId, revision, { version: 1, clean: storedClean ?? null, sync: storedSync ?? null });
 	await derived.saveClean(clean);
 	await derived.saveSync(fileId, sync);
 	return { changed: true, revision, modelCalls, failed };
 }
 
-/** Restores the latest snapshot (clean twin and sync state) and drops it. False if there is none. */
+/**
+ * The next revision for a file. Revisions only move forward: the result is above every revision
+ * ever issued (the stored high-water mark, which undo leaves alone), every snapshot and `seen`.
+ * The caller stores it with `saveLastRevision` when it writes.
+ */
+export async function nextRevision(
+	derived: CleanDerivedStore,
+	fileId: string,
+	...seen: (number | undefined)[]
+): Promise<number> {
+	const last = Math.max(
+		await derived.loadLastRevision(fileId),
+		...(await derived.listSnapshots(fileId)),
+		...seen.map(n => n ?? 0),
+	);
+	return last + 1;
+}
+
+/**
+ * Restores the latest snapshot (clean twin and sync state) exactly, revision number included.
+ * Revision numbers are never reused, so the restored number still names exactly this content: the
+ * textbook sees the file as stale unless it was built from this very revision. Drops the snapshot;
+ * false if there is none.
+ */
 export async function undoClean(derived: CleanDerivedStore, fileId: string): Promise<boolean> {
 	const revisions = await derived.listSnapshots(fileId);
 	if (revisions.length === 0) return false;
 	const latest = revisions[revisions.length - 1];
 	const snapshot = await derived.loadSnapshot(fileId, latest);
 	if (!snapshot) return false;
+	const undone = (await derived.loadClean(fileId))?.revision ?? 0;
 	if (snapshot.clean) await derived.saveClean(snapshot.clean);
 	else await derived.deleteClean(fileId);
 	if (snapshot.sync) await derived.saveSync(fileId, snapshot.sync);
 	else await derived.deleteSync(fileId);
+	// Keep the high-water mark above the undone revision, even in vaults written before it existed.
+	const current = Math.max(latest, undone);
+	if ((await derived.loadLastRevision(fileId)) < current) await derived.saveLastRevision(fileId, current);
 	await derived.deleteSnapshot(fileId, latest);
 	return true;
 }

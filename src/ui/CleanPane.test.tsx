@@ -166,6 +166,20 @@ describe('CleanPane', () => {
 		expect(await rawHashes()).toEqual(hashes);
 	});
 
+	it('while a Clean runs, accept, remove and undo are disabled and write nothing', async () => {
+		const before = await allFiles();
+		const rerender = await render({ busy: true });
+		const buttons = ['ai-accept', 'ai-remove', 'undo-clean'].map(n => $('[name="' + n + '"]') as HTMLButtonElement);
+		expect(buttons.map(b => b.disabled)).toEqual([true, true, true]);
+		for (const b of buttons) await click(b);
+		expect(await allFiles()).toEqual(before);
+		expect($$('.ai-added')).toHaveLength(1);
+
+		rerender({ busy: false });
+		await flush();
+		expect(buttons.map(b => b.disabled)).toEqual([false, false, false]);
+	});
+
 	it('lists gaps with a link to their block', async () => {
 		const onSelect = vi.fn();
 		await render({ onSelect });
@@ -185,7 +199,8 @@ describe('CleanPane', () => {
 		await click($('[name="undo-clean"]')!);
 		expect(blocks()).toHaveLength(2);
 		const after = await allFiles();
-		for (const [p, t] of after) if (p.startsWith('.metis/')) expect(t, p).toBe(before.get(p));
+		// The clean twin and sync state are restored exactly; only the revision high-water mark stays up.
+		for (const [p, t] of after) if (/^\.metis\/(clean|sync|history)\//.test(p)) expect(t, p).toBe(before.get(p));
 		for (const [p, t] of raw) if (p.startsWith('notes/')) expect(after.get(p), p).toBe(t);
 
 		await click($('[name="undo-clean"]')!);

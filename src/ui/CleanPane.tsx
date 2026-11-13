@@ -26,6 +26,7 @@ function renderText(node: JSONNode, key: number): ReactNode {
 
 interface Ctx {
 	ai: number;
+	disabled: boolean;
 	onAccept(index: number): void;
 	onRemove(index: number): void;
 }
@@ -47,6 +48,7 @@ function renderContent(content: JSONNode[] | undefined, ctx: Ctx): ReactNode[] {
 						name='ai-accept'
 						title='پذیرفتن'
 						aria-label='پذیرفتن'
+						disabled={ctx.disabled}
 						onClick={() => ctx.onAccept(index)}
 					>
 						✓
@@ -56,6 +58,7 @@ function renderContent(content: JSONNode[] | undefined, ctx: Ctx): ReactNode[] {
 						name='ai-remove'
 						title='حذف'
 						aria-label='حذف'
+						disabled={ctx.disabled}
 						onClick={() => ctx.onRemove(index)}
 					>
 						✕
@@ -146,6 +149,8 @@ export interface CleanPaneProps {
 	onLinkedRaw?(ids: BlockId[], scroll: boolean): void;
 	/** Called after the pane changed derived data (undo, accept, remove). */
 	onChanged?(): void;
+	/** True while a Clean runs: every action that writes the clean twin is disabled. */
+	busy?: boolean;
 }
 
 /**
@@ -153,11 +158,21 @@ export interface CleanPaneProps {
  * highlighted until dismissed (UI state only), one-click accept/remove of `aiAdded` spans, undo of
  * the last clean, and the list of `gap` spans. It never asks or blocks anything.
  */
-export function CleanPane({ derived, fileId, version, selected, onSelect, onLinkedRaw, onChanged }: CleanPaneProps) {
+export function CleanPane({
+	derived,
+	fileId,
+	version,
+	selected,
+	onSelect,
+	onLinkedRaw,
+	onChanged,
+	busy,
+}: CleanPaneProps) {
 	const [view, setView] = useState<CleanViewState>();
 	const [reload, setReload] = useState(0);
 	const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
 	const [error, setError] = useState<string>();
+	const [pending, setPending] = useState(false);
 	const pane = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -189,13 +204,19 @@ export function CleanPane({ derived, fileId, version, selected, onSelect, onLink
 		}
 	}, [linkedRawKey, selected]);
 
-	async function act(run: () => Promise<unknown>) {
+	// While a Clean or another pane action runs, nothing that writes the twin can start. The
+	// actions are also serialised per file and check the revision shown, in cleanView.ts.
+	const disabled = !!busy || pending;
+	async function act(run: () => Promise<boolean>) {
+		if (disabled) return;
 		setError(undefined);
+		setPending(true);
 		try {
-			await run();
-			onChanged?.();
+			if (await run()) onChanged?.();
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setPending(false);
 		}
 		setReload(n => n + 1);
 	}
@@ -215,10 +236,10 @@ export function CleanPane({ derived, fileId, version, selected, onSelect, onLink
 				<button
 					type='button'
 					name='undo-clean'
-					disabled={!view?.canUndo}
-					onClick={() => act(() => undoLastClean(derived, fileId))}
+					disabled={!view?.canUndo || disabled}
+					onClick={() => act(() => undoLastClean(derived, fileId, clean.revision))}
 				>
-					برگرداندن پاک‌نویس قبلی
+					برگرداندن تغییر قبلی
 				</button>
 				{highlighted.size > 0 && (
 					<button
@@ -241,8 +262,9 @@ export function CleanPane({ derived, fileId, version, selected, onSelect, onLink
 					const classes = ['clean-block', highlighted.has(id) && 'changed', linkedClean.has(id) && 'linked'];
 					const ctx: Ctx = {
 						ai: 0,
-						onAccept: index => act(() => acceptAi(derived, fileId, id, index)),
-						onRemove: index => act(() => removeAi(derived, fileId, id, index)),
+						disabled,
+						onAccept: index => act(() => acceptAi(derived, fileId, clean.revision, id, index)),
+						onRemove: index => act(() => removeAi(derived, fileId, clean.revision, id, index)),
 					};
 					return renderNode(block, i, ctx, {
 						'data-clean-id': id,

@@ -32,6 +32,7 @@ export function App() {
 	// Block linking between the raw note and its clean twin (SPEC 9).
 	const [selected, setSelected] = useState<BlockRef>();
 	const [showClean, setShowClean] = useState(true);
+	const [cleaning, setCleaning] = useState(false);
 
 	function selectRaw(e: MouseEvent) {
 		const id = rawBlockAt(editor, e.target as Node);
@@ -105,14 +106,16 @@ export function App() {
 						<div className='note-bar'>
 							<CleanButton
 								run={async () => {
-									await session?.flush(); // clean what is on screen
-									const report = await cleanNote(
-										vault,
-										session?.path ?? activePath,
-										appSettingsStore(),
-									);
-									setCleanCount(n => n + 1); // the textbook stale count may have changed
-									return report;
+									setCleaning(true); // the clean pane cannot write the twin meanwhile
+									try {
+										await session?.flush(); // clean what is on screen
+										const path = session?.path ?? activePath;
+										const report = await cleanNote(vault, path, appSettingsStore());
+										setCleanCount(n => n + 1); // the textbook stale count may have changed
+										return report;
+									} finally {
+										setCleaning(false);
+									}
 								}}
 							/>
 							<button
@@ -147,6 +150,7 @@ export function App() {
 								onSelect={setSelected}
 								onLinkedRaw={linkRaw}
 								onChanged={() => setCleanCount(n => n + 1)}
+								busy={cleaning}
 							/>
 						)}
 					</div>

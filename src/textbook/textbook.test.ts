@@ -12,7 +12,7 @@ import type { CleanNote, Textbook, TextbookOutline } from '../vault/types';
 import { buildTextbook, staleCount, undoTextbook, type TextbookDeps, type TextbookOptions } from './build';
 import { applyDelta } from './delta';
 import { CLEAN_TWIN_READER_KEYS, TEXTBOOK_STORE_KEYS, textbookPorts, type CleanTwinReader, type TextbookStore } from './ports';
-import { countStaleFiles } from './stale';
+import { countStaleFiles, isSectionStale } from './stale';
 
 // ---- helpers ---------------------------------------------------------------------------------
 
@@ -513,6 +513,11 @@ describe('countStaleFiles', () => {
 		expect(countStaleFiles({ f1: 1, f2: 3 }, o, t({ f1: 1, f2: 3 }, { f2: 2 }))).toBe(1);
 		expect(countStaleFiles({ f1: 1, f2: 3, f3: 1 }, o, t({ f1: 1, f2: 3 }, { f2: 3 }))).toBe(1);
 		expect(countStaleFiles({ f1: 1, f2: 3 }, o, t({ f1: 1, f2: 3 }))).toBe(1);
+	});
+
+	it('counts a file whose clean revision went back (undo) as stale: any difference counts', () => {
+		expect(countStaleFiles({ f1: 1, f2: 2 }, o, t({ f1: 1, f2: 3 }, { f2: 3 }))).toBe(1);
+		expect(isSectionStale(o.sections[1], t({ f1: 1, f2: 3 }, { f2: 3 }), { f1: 1, f2: 2 })).toBe(true);
 	});
 
 	it('is pure: same input, same output, input untouched', () => {

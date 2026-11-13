@@ -58,7 +58,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 - **I6 Network discipline**: the app makes no network request except to the configured provider `baseUrl`. All fonts and
   assets are bundled (no CDNs).
 - **I7 Textbook stability**: section ids and outline order are stable; a section is regenerated only if one of its
-  source files changed since it was built.
+  source files changed since it was built (its clean revision differs from the one the section was built from).
 - **I8 Deterministic normalisation**: Persian normalisation (section 6.1) is a pure function with unit tests; it never
   touches Latin text or code.
 
@@ -73,6 +73,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
     sync/<fileId>.json             # SyncState
     clean/<fileId>.json            # CleanNote (derived)
     history/<fileId>/<revision>.json   # snapshots for undo
+    revisions/<fileId>.json        # { version, last }: highest revision ever issued (never lowered)
     textbook/outline.json          # TextbookOutline
     textbook/textbook.json         # Textbook (derived)
 ```
@@ -94,7 +95,7 @@ interface RawNote {
 interface SyncState {
 	// .metis/sync/<fileId>.json
 	version: 1;
-	revision: number; // +1 per successful clean
+	revision: number; // forward-only: each clean, accept or remove takes a never-used number
 	blocks: Record<BlockId, { rawHash: string; rawText?: string; cleanIds: BlockId[]; lastRevision: number }>;
 	// rawText: the normalised raw text (as sent to the model) at the last clean of that block. States written before
 	// it existed lack it; they are read as "no previous raw text", and an unchanged block keeps its entry as is.
@@ -136,6 +137,9 @@ Storage rules:
 - Renaming a note also changes its `title`.
 - `createdAt` in `metis.vault.json` is milliseconds since epoch.
 - A history snapshot is `{ version, clean, sync }`.
+- Revisions only move forward: a new one is above every revision ever issued for the file (`revisions/<fileId>.json`),
+  so a revision number always names the same clean content. Accepting or removing an `aiAdded` span is a new revision
+  (with a snapshot), like a clean.
 - A folder vault is not remembered between sessions; the user picks it again.
 - Names are compared case-insensitively after NFC normalisation, so collisions are detected on every disk.
 
@@ -174,7 +178,8 @@ Storage rules:
    block is just reordered; final order follows raw order.
 7. Snapshot the previous CleanNote + SyncState into `history/`, write the new ones, set `changedIn = revision` on
    touched blocks.
-8. Undo = restore the latest snapshot.
+8. Undo = restore the latest snapshot exactly (clean + sync, so its older revision number too). The high-water mark is
+   not lowered, so the next clean takes a never-used revision.
 
 ### 6.3 Rewrite levels
 
@@ -199,10 +204,11 @@ Storage rules:
 - Input: clean twins only (never raw).
 - Outline is a stable skeleton (`outline.json`). On each build the model proposes a small _delta_ (add / rename / merge
   / reorder sections); the delta is applied, highlighted, and undoable.
-- A section is regenerated only if any of its source files has a newer clean revision than `sourceRevisions` (I7).
+- A section is regenerated only if any of its source files has a clean revision different from `sourceRevisions` (I7);
+  after an undo the revision is older, which also counts.
 - Strict by default: content comes from the notes. Gaps are collected in `gaps`. With `light-add` the model may complete
   an incomplete sentence inline (marked `aiAdded`), never add a section or heading.
-- **Stale indicator** (pure function `countStaleFiles`): the number of files whose clean revision is newer than what the
+- **Stale indicator** (pure function `countStaleFiles`): the number of files whose clean revision differs from what the
   textbook was built from. Shown as a quiet count beside the vault, never a popup. There is no threshold and no rule:
   the user decides when to build.
 

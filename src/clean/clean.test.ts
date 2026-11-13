@@ -601,7 +601,7 @@ describe('I1: clean code cannot write raw notes', () => {
 		const notes: RawNoteReader = only({ loadNote: (p: VaultPath) => vault.loadNote(p) }, ['loadNote']);
 		const allowed: (keyof CleanDerivedStore)[] = [
 			'loadSync', 'saveSync', 'deleteSync', 'loadClean', 'saveClean', 'deleteClean',
-			'listSnapshots', 'loadSnapshot', 'saveSnapshot', 'deleteSnapshot',
+			'listSnapshots', 'loadSnapshot', 'saveSnapshot', 'deleteSnapshot', 'loadLastRevision', 'saveLastRevision',
 		];
 		const derived = only(vault.derived, allowed);
 		await runClean({ notes, derived, provider: mock }, path, options);
