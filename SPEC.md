@@ -27,7 +27,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 
 - **Vault**: a topic; maps to one folder on disk.
 - **Folder / File**: user-organised structure inside a vault.
-- **Block**: a top-level node of the rich-text document (paragraph, heading, list, etc.). Every block has a stable `id`.
+- **Block**: a top-level node of the rich-text document (paragraph, heading, list, quote, code, ...). Every block has a stable `id`. Only top-level nodes are blocks and carry ids; nested nodes (list items, table cells, ...) belong to their block, so a list is one block.
 - **Clean twin**: derived document for one file, block-mapped to the raw file.
 - **Textbook**: derived document for one vault, built from clean twins, organised in sections.
 - **Provenance**: every piece of derived text is either `rewrite` (derived from the user's words) or `aiAdded` (the
@@ -38,7 +38,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 - **I1 Raw immutable**: no clean/textbook/provider code ever writes to `notes/**`. A test hashes raw files before and
   after a clean run and requires equality.
 - **I2 Stable block IDs**: editing a block's text never changes its id. Split keeps the id on the first part and mints a
-  new id for the rest. IDs survive save/load round trips and are never reused.
+  new id for the rest. Merging two blocks keeps the first block's id. Moving a block (drag) keeps its id. Copy-paste mints new ids for the copies. IDs survive save/load round trips and are never reused.
 - **I3 Incremental**: a raw block whose hash is unchanged since last sync causes zero model calls and its clean block
   stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
@@ -108,7 +108,12 @@ interface Textbook {
 }
 ```
 
-`rawHash` = sha256 of the canonical JSON of the block with `attrs.id` removed.
+`rawHash` = sha256 (hex) of the canonical JSON of the *normalised* block (6.1). Canonical form:
+- remove `attrs.id`; then omit `attrs` entirely if it is empty, and omit any attribute whose value is `null` or `undefined`;
+- sort object keys lexicographically at every level; keep array order (content, marks) as is;
+- serialise as compact UTF-8 JSON, no whitespace.
+
+The position of a block in the document is not part of its hash.
 
 ## 6. Clean pipeline (per file, incremental)
 
@@ -129,8 +134,7 @@ interface Textbook {
    from the batch only).
 5. Validate (schema, source ids exist, no empty output). Retry once on invalid output; on second failure leave that
    batch untouched and report it.
-6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
-   their clean blocks; order follows raw order.
+6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean block is just reordered; final order follows raw order.
 7. Snapshot the previous CleanNote + SyncState into `history/`, write the new ones, set `changedIn = revision` on
    touched blocks.
 8. Undo = restore the latest snapshot.
@@ -143,6 +147,7 @@ interface Textbook {
 ### 6.4 Clean prompt rules (src/prompts/clean.ts)
 
 - Be faithful: never add claims the user did not make.
+- For a `changed` block that was cleaned before, the model also receives the previous raw text and the previous clean text and must keep the wording of the parts that did not change (no churn).
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
 - Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them.
 - Unclear or incomplete notes: wrap the span in a `gap` mark; never guess.
@@ -209,8 +214,9 @@ Definition of done for every slice: tests pass; relevant invariants covered by t
 
 - Vite + React + TS + Vitest project; `npm test` works.
 - TipTap editor, RTL, paper theme, bundled Vazirmatn.
-- Every top-level block gets a stable id (I2): edit keeps it, split/paste mint new ones, save/load round-trip preserves
-  them.
+- Every top-level block gets a stable id (I2): edit keeps it, split mints a new id for the second part, merge keeps the first id, drag-move keeps the id, copy-paste mints new ids, save/load round-trip preserves them. Each case needs a test.
+- Check the licence of any id package (e.g. TipTap's unique-id extension) before using it; if it is not MIT/free, write a small ProseMirror plugin instead.
+- `canonicalHash` follows the canonical form in section 5 (empty `attrs` omitted, keys sorted). Test: a block hashes the same with `attrs: {id}` as without `attrs`.
 - Pure `src/core/blocks.ts` with the canonical hash function.
 - Fixtures in `fixtures/persian/` are loadable in tests.
 
