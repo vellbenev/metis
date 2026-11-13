@@ -418,12 +418,18 @@ describe('gaps and provenance', () => {
 				{ type: 'heading', text: 'zk-SNARK' },
 				{ type: 'paragraph', text: 'prover اثبات را <ai>به verifier</ai> می‌فرستد' },
 				{ type: 'bulletList', items: ['succinct', 'non-interactive <gap>?</gap>'] },
+				{ type: 'codeBlock', text: 'verify(proof)' },
 			],
 		});
 		const report = await build({ enrichment: 'light-add' });
 		expect(report.failed).toEqual([]);
 		const t = await textbook();
-		const spans = Object.values(t.sections).flatMap(s => textNodes(s.doc));
+		const blocks = Object.values(t.sections).flatMap(s => s.doc.content!);
+		// Code blocks allow no marks: their text carries none, and the provenance rule skips them.
+		const code = blocks.filter(b => b.type === 'codeBlock');
+		expect(code.length).toBeGreaterThan(0);
+		for (const b of code) expect(b.content).toEqual([{ type: 'text', text: 'verify(proof)' }]);
+		const spans = blocks.filter(b => b.type !== 'codeBlock').flatMap(textNodes);
 		expect(spans.length).toBeGreaterThan(0);
 		for (const span of spans) {
 			const types = span.marks!.map(m => m.type);

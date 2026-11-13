@@ -1,5 +1,5 @@
 // Validation of a generated textbook section and conversion to TipTap JSON with provenance marks (I4):
-// every text span is `rewrite` or `aiAdded`; unclear spans also carry `gap`.
+// every text span is `rewrite` or `aiAdded`; unclear spans also carry `gap`. Code block text has no marks.
 
 import type { JSONNode } from '../core/blocks';
 import type { Enrichment } from '../provider/types';
@@ -119,7 +119,8 @@ export function sectionDoc(blocks: SectionBlock[], newId: () => string): JSONNod
 			case 'orderedList':
 				return { type: b.type, attrs, content: b.items.map(i => ({ type: 'listItem', content: [paragraph(i)] })) };
 			case 'codeBlock':
-				return { type: 'codeBlock', attrs, content: [{ type: 'text', text: b.code, marks: [REWRITE] }] };
+				// TipTap code blocks allow no marks, so code text carries no provenance mark (I4 skips code blocks).
+				return { type: 'codeBlock', attrs, content: [{ type: 'text', text: b.code }] };
 		}
 	});
 	return { type: 'doc', content };
