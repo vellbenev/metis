@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# local tooling, not part of the project
+.claude/
+CLAUDE.md
+docs/experiment-log.md
+docs/spec-questions.md

@@ -1,0 +1,2 @@
+روز دوم : non-interactive یعنی verifier لازم نیست سوال بپرسه ، prover خودش یه proof میسازه که هر کسی میتونه چک کنه . fiat-shamir : سوالای verifier رو با hash از خود proof میسازن
+اینم مهمه : تو بلاکچین چون نمیشه گفت verifier کیه (همه باید بتونن چک کنن) non-interactive لازمه

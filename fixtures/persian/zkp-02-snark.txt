@@ -1,0 +1,5 @@
+zk-snark مخفف zero-knowledge succinct non-interactive argument of knowledge
+succinct = proof کوچیکه و سریع چک میشه
+نیاز به trusted setup داره (این یکی خطرناکه چون اگه ...
+zk-stark بدون trusted setup ولی proof بزرگتر
+ربط داره به نوت ۱ - همون non-interactive
