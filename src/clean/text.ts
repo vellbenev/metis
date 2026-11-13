@@ -76,3 +76,49 @@ export function codeSpans(node: JSONNode): string[] {
 	if (typeof node.text === 'string') return hasMark(node, 'code') ? [node.text] : [];
 	return (node.content ?? []).flatMap(codeSpans);
 }
+
+// ---- Latin technical terms -----------------------------------------------------------------------
+
+const LATIN = '\\p{Script=Latin}';
+/** A Latin word: starts with a Latin letter; inner `-`, `_` or `.` join parts (zk-SNARK, Node.js, ERC-20). */
+const TERM = new RegExp(`(?<![${LATIN}0-9])[${LATIN}][${LATIN}0-9]*(?:[-_.][${LATIN}0-9]+)*`, 'gu');
+const URL_OR_EMAIL = /(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S+|\S+@\S+\.\S+/giu;
+/** Hyphen-like characters a model may write instead of `-`. */
+const HYPHENS = /[‐-―−]/g;
+
+/** Block text for term matching: text nodes joined as is, code spans replaced by a space, blocks by a newline. */
+function termText(node: JSONNode): string {
+	if (typeof node.text === 'string') return hasMark(node, 'code') ? ' ' : node.text;
+	if (node.type === 'hardBreak') return ' ';
+	const children = node.content ?? [];
+	const inlineOnly = children.every(c => typeof c.text === 'string' || c.type === 'hardBreak');
+	return children.map(termText).join(inlineOnly ? '' : '\n');
+}
+
+/**
+ * The Latin technical terms in a block, which the clean output must keep (SPEC 6.4). A term is a
+ * Latin word as matched by TERM. Inline code spans (already checked byte for byte), URLs and e-mail
+ * addresses are skipped, and so are single letters (variables such as x or n). Repeats are dropped
+ * case-insensitively; the first spelling is kept.
+ */
+export function latinTerms(block: JSONNode): string[] {
+	const text = termText(block).replace(URL_OR_EMAIL, ' ');
+	const out = new Map<string, string>();
+	for (const [term] of text.matchAll(TERM)) {
+		if (term.length > 1 && !out.has(term.toLowerCase())) out.set(term.toLowerCase(), term);
+	}
+	return [...out.values()];
+}
+
+/**
+ * Terms that do not occur in `text` as a whole Latin word. Case and hyphen variants (– for -) are
+ * accepted, and so is anything non-Latin around a term: a Persian suffix with or without ZWNJ
+ * (prover‌ها), punctuation, or formatting already removed from `text`.
+ */
+export function missingTerms(text: string, terms: string[]): string[] {
+	const haystack = text.replace(HYPHENS, '-');
+	return terms.filter(term => {
+		const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		return !new RegExp(`(?<![${LATIN}0-9])${escaped}(?![${LATIN}0-9])`, 'iu').test(haystack);
+	});
+}

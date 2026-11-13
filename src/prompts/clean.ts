@@ -19,6 +19,8 @@ export interface CleanPromptInput {
 	/** Neighbouring clean blocks, read-only context. */
 	contextBefore: string[];
 	contextAfter: string[];
+	/** Latin terms found in the batch; the output must keep every one (checked after the reply). */
+	latinTerms?: string[];
 	rewriteLevel: RewriteLevel;
 	enrichment: Enrichment;
 }
@@ -44,7 +46,7 @@ export function cleanSystemPrompt(rewriteLevel: RewriteLevel, enrichment: Enrich
 		'- Be faithful: never add a claim, fact or example the user did not write. Do not drop anything the user wrote.',
 		`- Rewrite level ${LEVELS[rewriteLevel]}`,
 		'- Write semi-formal Persian; turn colloquial speech into clean written Persian without changing the meaning.',
-		'- Keep Latin technical terms in Latin exactly as written (for example zk-SNARK, prover); never translate or transliterate them.',
+		'- Keep Latin technical terms in Latin exactly as written (for example zk-SNARK, prover); never translate or transliterate them. Every term listed in "latinTerms" must appear in your output, in Latin script, spelled as given (a Persian suffix after it is fine, joined with ZWNJ: prover‌ها); an output without one of them is rejected.',
 		'- Leave URLs, code and digits exactly as written; never change, translate or convert them.',
 		'- Use correct ZWNJ (نیم‌فاصله), for example می‌رود, کتاب‌ها. Join ای, ام, ات, اش with ZWNJ only where they are suffixes of the word before (خانه‌ای, خسته‌ام, خانه‌ات, خانه‌اش); keep them separate where they are words of their own (for example the vocative ای in ای خدا).',
 		'- Inline formatting is simple Markdown: `code`, **bold**, *italic*; a backslash escapes a literal \\, ` or *. Keep this formatting in your output, and copy every `code` span byte for byte.',
@@ -52,7 +54,7 @@ export function cleanSystemPrompt(rewriteLevel: RewriteLevel, enrichment: Enrich
 		`- ${ENRICHMENT[enrichment]}`,
 		'- A block with "previousClean" was cleaned before and the user edited it since. "previousRaw" (when present) is its text at that time and "previousClean" is how it was cleaned: compare "previousRaw" with "text", and keep the wording of previousClean for every part that did not change.',
 		'- "contextBefore" and "contextAfter" are already-cleaned neighbouring blocks. Read them for context only; never output them.',
-		'Input: a JSON object with "blocks" (each with "id" and "text"), "contextBefore" and "contextAfter".',
+		'Input: a JSON object with "blocks" (each with "id" and "text"), "contextBefore", "contextAfter" and, when the blocks contain Latin terms, "latinTerms".',
 		'Output: only a JSON object {"blocks": [...]}, no other text. Each output block is one of:',
 		'  {"type": "paragraph", "text": "...", "sources": ["<id>"]}',
 		'  {"type": "heading", "level": 1 | 2 | 3, "text": "...", "sources": ["<id>"]}',
@@ -72,6 +74,7 @@ export function cleanMessages(input: CleanPromptInput): ChatMessage[] {
 		})),
 		contextBefore: input.contextBefore,
 		contextAfter: input.contextAfter,
+		...(input.latinTerms?.length ? { latinTerms: input.latinTerms } : {}),
 	};
 	return [
 		{ role: 'system', content: cleanSystemPrompt(input.rewriteLevel, input.enrichment) },

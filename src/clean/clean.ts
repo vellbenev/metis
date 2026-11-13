@@ -12,7 +12,7 @@ import type { CleanNote, RewriteLevel, SyncState } from '../vault/types';
 import { affectedIds, diffBlocks, isVerbatimBlock, makeBatches, type Batch, type RawBlock } from './diff';
 import { parseCleanOutput, specToNode, verbatimNode, type CleanBlockSpec } from './output';
 import type { CleanDerivedStore, RawNoteReader } from './ports';
-import { blockText, codeSpans } from './text';
+import { blockText, codeSpans, latinTerms } from './text';
 
 export interface CleanDeps {
 	notes: RawNoteReader;
@@ -111,6 +111,11 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 	const callModel = async (batch: Batch): Promise<CleanBlockSpec[] | string> => {
 		const ids = batch.blocks.map(b => b.id);
 		const inputCode = batch.blocks.flatMap(b => codeSpans(b.block));
+		// Latin terms of the batch (case-insensitive repeats dropped); each must survive the rewrite.
+		const inputTerms: string[] = [];
+		for (const term of batch.blocks.flatMap(b => latinTerms(b.block))) {
+			if (!inputTerms.some(t => t.toLowerCase() === term.toLowerCase())) inputTerms.push(term);
+		}
 		const messages = cleanMessages({
 			blocks: batch.blocks.map(b => {
 				const previous = b.kind === 'changed' ? prevSync?.blocks[b.id] : undefined;
@@ -130,6 +135,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			}),
 			contextBefore: context(diff.blocks, batch.start - 1, -1, options.contextBlocks ?? DEFAULT_CONTEXT, affected, prevSync, cleanById),
 			contextAfter: context(diff.blocks, batch.end + 1, 1, options.contextBlocks ?? DEFAULT_CONTEXT, affected, prevSync, cleanById),
+			latinTerms: inputTerms,
 			rewriteLevel: options.rewriteLevel,
 			enrichment: options.enrichment,
 		});
@@ -139,7 +145,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			modelCalls++;
 			// A provider error (network, auth, ...) aborts the whole run; nothing is written.
 			const reply = (await provider.complete({ messages: request, json: true, signal: options.signal })).content;
-			const parsed = parseCleanOutput(reply, ids, options.enrichment, inputCode);
+			const parsed = parseCleanOutput(reply, ids, options.enrichment, inputCode, inputTerms);
 			if (parsed.ok) return parsed.blocks;
 			error = parsed.error;
 			request = retryMessages(messages, reply, error);

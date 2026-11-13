@@ -54,6 +54,49 @@ describe('parseCleanOutput', () => {
 		expect(spans('کد `` a`b `` و ` x `', ['a`b', 'x'])).toEqual([['کد '], ['a`b', 'code'], [' و '], ['x', 'code']]);
 	});
 
+	it('reads only an unmatched * literally; the other markers still format (Q29)', () => {
+		const spans = (text: string) => {
+			const r = parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps');
+			if (!r.ok) throw new Error(r.error);
+			const b = r.blocks[0];
+			return ('text' in b ? b.text : []).map(s => [s.text, ...(['bold', 'italic'] as const).filter(k => s[k])]);
+		};
+		expect(spans('**prover** و a*b')).toEqual([['prover', 'bold'], [' و a*b']]);
+		expect(spans('a*b و **prover**')).toEqual([['a*b و '], ['prover', 'bold']]);
+		expect(spans('**الف** *ب* و ج*')).toEqual([['الف', 'bold'], [' '], ['ب', 'italic'], [' و ج*']]);
+		expect(spans('**الف** و **ب')).toEqual([['الف', 'bold'], [' و **ب']]);
+		expect(spans('a*b *ج*')).toEqual([['a*b '], ['ج', 'italic']]);
+		expect(spans('x * y و *ب*')).toEqual([['x * y و '], ['ب', 'italic']]);
+	});
+
+	it('requires every Latin term of the input; case, hyphen and Persian suffix variants pass', () => {
+		const withTerms = (text: string, terms = ['zk-SNARK', 'prover']) =>
+			parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps', [], terms);
+		expect(withTerms('zk-SNARK و prover').ok).toBe(true);
+		expect(withTerms('اثبات‌کننده و zk-SNARK')).toEqual({ ok: false, error: 'Latin terms must be kept as written: prover' });
+		expect(withTerms('zk-SNARK و پروور').ok).toBe(false);
+		// A longer Latin word is not the term.
+		expect(withTerms('zk-SNARKs و prover').ok).toBe(false);
+		expect(withTerms('zk-SNARK و provers').ok).toBe(false);
+		// Variants of valid output that must not be rejected.
+		expect(withTerms('**zk-SNARK** و *prover*').ok).toBe(true);
+		expect(withTerms('**zk**-SNARK و prover').ok).toBe(true);
+		expect(withTerms('ZK-SNARK و Prover').ok).toBe(true);
+		expect(withTerms('zk‑SNARK و prover').ok).toBe(true);
+		expect(withTerms('zk-SNARK‌ها و prover‌ها').ok).toBe(true);
+		expect(withTerms('zk-SNARKها، proverی.').ok).toBe(true);
+		expect(withTerms('(zk-SNARK) و «prover»').ok).toBe(true);
+		expect(withTerms('`zk-SNARK` و <gap>prover</gap>').ok).toBe(true);
+		const list = parseCleanOutput(
+			JSON.stringify({ blocks: [{ type: 'bulletList', items: ['zk-SNARK', 'prover'], sources: ['a'] }] }),
+			ids,
+			'flag-gaps',
+			[],
+			['zk-SNARK', 'prover'],
+		);
+		expect(list.ok).toBe(true);
+	});
+
 	it('requires every input code span exactly; invented code spans become plain text', () => {
 		const withCode = (text: string) => parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps', ['f(x)']);
 		expect(withCode('ببین `f(x)`').ok).toBe(true);

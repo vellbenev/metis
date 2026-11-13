@@ -18,6 +18,13 @@ describe('clean prompt', () => {
 		expect(prompt).toContain('byte for byte');
 	});
 
+	it('lists the batch Latin terms only when there are some, and says each must be kept', () => {
+		const base = { blocks: [{ id: 'a', text: 'prover' }], contextBefore: [], contextAfter: [], rewriteLevel: 'structure', enrichment: 'flag-gaps' } as const;
+		expect(prompt).toContain('Every term listed in "latinTerms" must appear in your output');
+		expect(JSON.parse(cleanMessages({ ...base, latinTerms: ['prover'] })[1].content).latinTerms).toEqual(['prover']);
+		expect(JSON.parse(cleanMessages({ ...base, latinTerms: [] })[1].content)).not.toHaveProperty('latinTerms');
+	});
+
 	it('sends previousRaw and previousClean only when given', () => {
 		const messages = cleanMessages({
 			blocks: [
