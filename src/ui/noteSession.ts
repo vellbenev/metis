@@ -42,6 +42,10 @@ export class NoteSession {
 		return this.current?.path;
 	}
 
+	get fileId(): string | undefined {
+		return this.current?.note.fileId;
+	}
+
 	private onUpdate = () => {
 		if (!this.current) return;
 		this.current.dirty = true;

@@ -58,6 +58,12 @@ export interface DerivedStore {
 	loadSnapshot(fileId: string, revision: number): Promise<HistorySnapshot | undefined>;
 	saveSnapshot(fileId: string, revision: number, snapshot: HistorySnapshot): Promise<void>;
 	deleteSnapshot(fileId: string, revision: number): Promise<void>;
+	/**
+	 * The highest revision ever issued for a file (`.metis/revisions/<fileId>.json`). Undo does not
+	 * lower it, so a revision number is never reused; 0 if none was issued.
+	 */
+	loadLastRevision(fileId: string): Promise<number>;
+	saveLastRevision(fileId: string, revision: number): Promise<void>;
 	loadOutline(): Promise<TextbookOutline | undefined>;
 	saveOutline(outline: TextbookOutline): Promise<void>;
 	loadTextbook(): Promise<Textbook | undefined>;
@@ -185,6 +191,9 @@ export function createDerivedStore(metis: Dir): DerivedStore {
 			const name = `${revision(rev)}.json`;
 			await (await historyDir(id, false))?.remove(name);
 		},
+		loadLastRevision: async id =>
+			(await readJson<{ version: 1; last: number }>(await sub('revisions'), file(id)))?.last ?? 0,
+		saveLastRevision: async (id, rev) => writeJson(await sub('revisions'), file(id), { version: 1, last: revision(rev) }),
 		loadOutline: async () => readJson(await sub('textbook'), 'outline.json'),
 		saveOutline: async outline => writeJson(await sub('textbook'), 'outline.json', outline),
 		loadTextbook: async () => readJson(await sub('textbook'), 'textbook.json'),

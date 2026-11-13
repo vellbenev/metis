@@ -467,6 +467,17 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			]);
 		});
 
+		it('stores the revision high-water mark per file under .metis/revisions/', async () => {
+			const { root, store } = await setup();
+			expect(await store.derived.loadLastRevision('f1')).toBe(0);
+			await store.derived.saveLastRevision('f1', 4);
+			expect(await store.derived.loadLastRevision('f1')).toBe(4);
+			expect(await store.derived.loadLastRevision('f2')).toBe(0);
+			const reopened = await openVault(root);
+			expect(await reopened.derived.loadLastRevision('f1')).toBe(4);
+			await expect(store.derived.saveLastRevision('f1', -1)).rejects.toThrow();
+		});
+
 		it('deletes sync, clean and snapshot files; deleting a missing one is a no-op', async () => {
 			const { root, store } = await setup();
 			const { derived } = store;

@@ -109,3 +109,143 @@ body {
 	font-size: 0.9rem;
 	color: var(--ink-soft);
 }
+
+/* ---- parallel clean view ---- */
+
+.page.wide {
+	max-width: 92rem;
+}
+
+.note-bar {
+	display: flex;
+	align-items: baseline;
+	gap: 1rem;
+}
+
+.clean-toggle,
+.clean-tools button,
+.clean-gaps button {
+	font: inherit;
+	font-size: 0.85rem;
+	color: var(--ink-soft);
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+
+.clean-tools button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.parallel {
+	display: flex;
+	gap: 2.5rem;
+	align-items: flex-start;
+}
+
+.parallel > * {
+	flex: 1;
+	min-width: 0;
+}
+
+.clean-pane {
+	position: sticky;
+	top: 0;
+	max-height: 100vh;
+	overflow-y: auto;
+	padding-inline-start: 1.5rem;
+	border-inline-start: 1px solid var(--rule);
+}
+
+.clean-tools {
+	display: flex;
+	gap: 1rem;
+}
+
+.clean-empty {
+	color: var(--ink-soft);
+	font-size: 0.9rem;
+}
+
+.clean-block {
+	border-inline-start: 2px solid transparent;
+	padding-inline-start: 0.5rem;
+	margin-inline-start: -0.5rem;
+	cursor: pointer;
+}
+
+.clean-block.changed {
+	background: rgba(220, 207, 174, 0.35);
+	border-inline-start-color: var(--rule);
+}
+
+.clean-block.linked,
+.metis-editor > .linked {
+	outline: 1px solid var(--ink-soft);
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+
+.clean-pane pre,
+.clean-pane code {
+	direction: ltr;
+	unicode-bidi: isolate;
+	font-family: ui-monospace, monospace;
+	background: var(--code-bg);
+}
+
+.clean-pane pre {
+	padding: 0.5rem 0.75rem;
+	text-align: left;
+}
+
+.clean-pane .gap {
+	background: var(--code-bg);
+	border-bottom: 1px dotted var(--ink-soft);
+}
+
+.clean-pane .ai-added {
+	color: var(--ink-soft);
+	border-bottom: 1px dashed var(--ink-soft);
+}
+
+.ai-actions button {
+	font: inherit;
+	font-size: 0.75rem;
+	color: var(--ink-soft);
+	background: none;
+	border: none;
+	padding: 0 0.15rem;
+	cursor: pointer;
+}
+
+.clean-gaps {
+	font-size: 0.9rem;
+	color: var(--ink-soft);
+	border-top: 1px solid var(--rule);
+	margin-top: 2rem;
+}
+
+.clean-gaps h2 {
+	font-size: 0.95rem;
+}
+
+.clean-gaps button {
+	text-align: start;
+}
+
+@media (max-width: 60rem) {
+	.parallel {
+		flex-direction: column;
+	}
+
+	.clean-pane {
+		position: static;
+		max-height: none;
+		padding-inline-start: 0;
+		border-inline-start: none;
+		border-top: 1px solid var(--rule);
+	}
+}

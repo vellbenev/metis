@@ -6,6 +6,7 @@ import { createOpenAIProvider } from '../provider/openai';
 import type { Provider, ProviderProfile } from '../provider/types';
 import type { SettingsStore } from '../settings/store';
 import type { VaultPath, VaultStore } from '../vault/store';
+import { withFileLock } from './fileLock';
 
 export async function cleanNote(
 	vault: VaultStore,
@@ -14,9 +15,13 @@ export async function cleanNote(
 	createProvider: (profile: ProviderProfile) => Provider = createOpenAIProvider,
 ): Promise<CleanReport> {
 	const { clean, enrichment } = await settings.load();
-	return runClean(
-		{ notes: { loadNote: p => vault.loadNote(p) }, derived: vault.derived, provider: createProvider(clean) },
-		path,
-		{ rewriteLevel: vault.meta.defaults.rewriteLevel, enrichment },
+	const { fileId } = await vault.loadNote(path);
+	// Under the same per-file lock as the clean pane's undo/accept/remove.
+	return withFileLock(vault.derived, fileId, () =>
+		runClean(
+			{ notes: { loadNote: p => vault.loadNote(p) }, derived: vault.derived, provider: createProvider(clean) },
+			path,
+			{ rewriteLevel: vault.meta.defaults.rewriteLevel, enrichment },
+		),
 	);
 }

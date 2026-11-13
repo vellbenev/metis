@@ -22,4 +22,6 @@ export type CleanDerivedStore = Pick<
 	| 'loadSnapshot'
 	| 'saveSnapshot'
 	| 'deleteSnapshot'
+	| 'loadLastRevision'
+	| 'saveLastRevision'
 >;
