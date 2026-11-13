@@ -27,7 +27,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 
 - **Vault**: a topic; maps to one folder on disk.
 - **Folder / File**: user-organised structure inside a vault.
-- **Block**: a top-level node of the rich-text document (paragraph, heading, list, quote, code, ...). Every block has a stable `id`. Only top-level nodes are blocks and carry ids; nested nodes (list items, table cells, ...) belong to their block, so a list is one block.
+- **Block**: a top-level node of the rich-text document (paragraph, heading, list, quote, code, ...). Every block has a stable `id`. Only top-level nodes are blocks and carry ids; nested nodes (list items, table cells, ...) belong to their block, so a list is one block. Changing a block's type in place (paragraph -> heading, list, quote, ... and back) keeps its id. Empty blocks (e.g. the trailing empty paragraph the editor keeps) are skipped when hashing and syncing (S4).
 - **Clean twin**: derived document for one file, block-mapped to the raw file.
 - **Textbook**: derived document for one vault, built from clean twins, organised in sections.
 - **Provenance**: every piece of derived text is either `rewrite` (derived from the user's words) or `aiAdded` (the
@@ -38,7 +38,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
 - **I1 Raw immutable**: no clean/textbook/provider code ever writes to `notes/**`. A test hashes raw files before and
   after a clean run and requires equality.
 - **I2 Stable block IDs**: editing a block's text never changes its id. Split keeps the id on the first part and mints a
-  new id for the rest. Merging two blocks keeps the first block's id. Moving a block (drag) keeps its id. Copy-paste mints new ids for the copies. IDs survive save/load round trips and are never reused.
+  new id for the rest. Merging two blocks keeps the first block's id. Moving a block (drag) keeps its id. Changing a block's type in place keeps its id. On paste, a block whose id already exists in the document gets a new id (copy-paste); otherwise it keeps its id (cut-paste is a move). IDs survive save/load round trips and are never reused.
 - **I3 Incremental**: a raw block whose hash is unchanged since last sync causes zero model calls and its clean block
   stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
@@ -128,7 +128,7 @@ The position of a block in the document is not part of its hash.
 ### 6.2 Steps
 
 1. Normalise a copy of the raw doc.
-2. Hash every top-level raw block and compare with `SyncState`: classify `new`, `changed`, `unchanged`, `deleted`.
+2. Hash every non-empty top-level raw block (empty blocks are skipped) and compare with `SyncState`: classify `new`, `changed`, `unchanged`, `deleted`.
 3. Group adjacent new/changed blocks into batches. Include up to N neighbouring clean blocks as read-only context.
 4. Call the `clean` provider profile. Expected output: JSON array of clean blocks, each with `sources: BlockId[]` (ids
    from the batch only).
@@ -214,7 +214,7 @@ Definition of done for every slice: tests pass; relevant invariants covered by t
 
 - Vite + React + TS + Vitest project; `npm test` works.
 - TipTap editor, RTL, paper theme, bundled Vazirmatn.
-- Every top-level block gets a stable id (I2): edit keeps it, split mints a new id for the second part, merge keeps the first id, drag-move keeps the id, copy-paste mints new ids, save/load round-trip preserves them. Each case needs a test.
+- Every top-level block gets a stable id (I2): edit and in-place type change keep it, split mints a new id for the second part, merge keeps the first id, drag-move and cut-paste keep the id, copy-paste mints new ids, save/load round-trip preserves them. Each case needs a test.
 - Check the licence of any id package (e.g. TipTap's unique-id extension) before using it; if it is not MIT/free, write a small ProseMirror plugin instead.
 - `canonicalHash` follows the canonical form in section 5 (empty `attrs` omitted, keys sorted). Test: a block hashes the same with `attrs: {id}` as without `attrs`.
 - Pure `src/core/blocks.ts` with the canonical hash function.
