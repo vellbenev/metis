@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createOpenAIProvider } from '../provider/openai';
 import { testModel, type TestModelReport } from '../provider/testModel';
 import type { Enrichment, ProfileName, Provider, ProviderProfile, ProviderSettings } from '../provider/types';
+import { Bidi } from './bidi';
 import type { SettingsStore } from './store';
 
 export interface SettingsScreenProps {
@@ -132,7 +133,7 @@ function TestResult({ state }: { state: TestState }) {
 	if (report.error) {
 		return (
 			<p role='alert' className='settings-error' data-kind={report.error.kind}>
-				{report.error.message}
+				<Bidi text={report.error.message} />
 			</p>
 		);
 	}
@@ -141,12 +142,16 @@ function TestResult({ state }: { state: TestState }) {
 		<ul role='status' className='settings-report' data-ok={report.ok}>
 			<li>پاسخ خالی نیست: {yesNo(report.nonEmpty)}</li>
 			<li>
-				اصطلاحات Latin حفظ شد: {yesNo(report.missingLatinTerms.length === 0)}
-				{report.missingLatinTerms.length > 0 && <span dir='ltr'> ({report.missingLatinTerms.join(', ')})</span>}
+				<Bidi text={`اصطلاحات Latin حفظ شد: ${yesNo(report.missingLatinTerms.length === 0)}`} />
+				{report.missingLatinTerms.length > 0 && <bdi dir='ltr'> ({report.missingLatinTerms.join(', ')})</bdi>}
 			</li>
-			{report.json !== 'not-requested' && <li>JSON معتبر: {yesNo(report.json === 'valid')}</li>}
+			{report.json !== 'not-requested' && (
+				<li>
+					<Bidi text={`JSON معتبر: ${yesNo(report.json === 'valid')}`} />
+				</li>
+			)}
 			<li>
-				زمان پاسخ: <span dir='ltr'>{Math.round(report.latencyMs)} ms</span>
+				زمان پاسخ: <bdi dir='ltr'>{Math.round(report.latencyMs)} ms</bdi>
 			</li>
 		</ul>
 	);

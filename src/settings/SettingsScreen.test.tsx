@@ -135,6 +135,10 @@ describe('settings screen', () => {
 		const alert = container.querySelector('[data-profile="clean"] [role="alert"]')!;
 		expect(alert.getAttribute('data-kind')).toBe('cors-local');
 		expect(alert.textContent).toContain(`OLLAMA_ORIGINS=${location.origin}`);
+		// Latin runs in the Persian message are isolated so they render in order.
+		const runs = [...alert.querySelectorAll('bdi[dir="ltr"]')].map(b => b.textContent);
+		expect(runs).toContain(`OLLAMA_ORIGINS=${location.origin}`);
+		expect(runs).toContain('http://localhost:11434/v1');
 	});
 
 	it('shows which Latin terms the model dropped', async () => {
