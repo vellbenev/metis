@@ -14,7 +14,7 @@ function filesUnder(dir: string): string[] {
 
 describe('bundled assets (I6)', () => {
 	it('index.html and app sources reference no remote URLs', () => {
-		const files = [join(root, 'index.html'), ...filesUnder(join(root, 'src')).filter(f => !f.endsWith('.test.ts'))];
+		const files = [join(root, 'index.html'), ...filesUnder(join(root, 'src')).filter(f => !/\.test\.tsx?$/.test(f))];
 		for (const file of files) expect(readFileSync(file, 'utf8'), file).not.toMatch(remote);
 	});
 

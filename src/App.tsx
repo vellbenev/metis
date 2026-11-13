@@ -1,6 +1,7 @@
 import { EditorContent, useEditor } from '@tiptap/react';
 import { useEffect, useState } from 'react';
 import { editorExtensions } from './editor/extensions';
+import { SettingsEntry } from './settings/SettingsEntry';
 import { NoteSession } from './ui/noteSession';
 import { VaultPanel } from './ui/VaultPanel';
 import type { VaultPath } from './vault/store';
@@ -42,6 +43,7 @@ export function App() {
 				}}
 			/>
 			<main className='page'>
+				<SettingsEntry />
 				{saveError && (
 					<p className='save-error' role='status'>
 						ذخیره نشد؛ نوشته‌ها هنوز اینجا هستند و با ویرایش بعدی دوباره ذخیره می‌شوند. ({saveError})
