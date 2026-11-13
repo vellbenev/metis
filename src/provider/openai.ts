@@ -1,4 +1,5 @@
 import { errorFromFetchFailure, errorFromStatus, ProviderError, redactError, redactSecret } from './errors';
+import { stripThinking } from './think';
 import type { ChatRequest, ChatResponse, Provider, ProviderProfile } from './types';
 
 export type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
@@ -61,7 +62,8 @@ export function createOpenAIProvider(profile: ProviderProfile, options: OpenAICl
 		if (typeof content !== 'string') {
 			throw new ProviderError('bad-response', 'پاسخ سرور شکل chat completion ندارد', response.status);
 		}
-		return { content };
+		// Reasoning is never part of the answer; strip it for every profile and the Test model check.
+		return { content: stripThinking(content) };
 	}
 
 	return {
