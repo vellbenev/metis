@@ -19,13 +19,7 @@ export interface Dir {
 
 /** Throws unless `name` is exactly one path segment. Every backend calls this before touching storage. */
 export function segment(name: string): string {
-	if (
-		typeof name !== 'string' ||
-		name.length === 0 ||
-		name === '.' ||
-		name === '..' ||
-		/[/\\\0]/.test(name)
-	) {
+	if (typeof name !== 'string' || name.length === 0 || name === '.' || name === '..' || /[/\\\0]/.test(name)) {
 		throw new Error(`invalid path segment: ${JSON.stringify(name)}`);
 	}
 	return name;

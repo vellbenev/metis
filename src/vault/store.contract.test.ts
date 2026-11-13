@@ -214,7 +214,9 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			expect(loaded.doc.content!.map(b => b.attrs!.id)).toEqual(note.doc.content!.map(b => b.attrs!.id));
 			expect(JSON.stringify(loaded)).toContain('‌'); // ZWNJ survives
 			await expect(store.loadNote(['zkp', 'missing'])).rejects.toThrow();
-			await expect(store.saveNote(['zkp', 'bad'], { ...note, version: 2 } as unknown as RawNote)).rejects.toThrow();
+			await expect(
+				store.saveNote(['zkp', 'bad'], { ...note, version: 2 } as unknown as RawNote),
+			).rejects.toThrow();
 		});
 
 		it('renames a note: new path, same fileId and content, old path gone', async () => {
@@ -302,11 +304,16 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			for (const bad of ['', '..', '../notes/x', 'a/b', '..\\notes', 'x.json', 'ﺍ']) {
 				await expect(derived.saveSync(bad, sync(1)), bad).rejects.toThrow();
 				await expect(derived.saveClean(clean(bad, 1)), bad).rejects.toThrow();
-				await expect(derived.saveSnapshot(bad, 1, { version: 1, clean: null, sync: null }), bad).rejects.toThrow();
+				await expect(
+					derived.saveSnapshot(bad, 1, { version: 1, clean: null, sync: null }),
+					bad,
+				).rejects.toThrow();
 				await expect(derived.loadSync(bad), bad).rejects.toThrow();
 			}
 			for (const bad of [-1, 1.5, Number.NaN]) {
-				await expect(derived.saveSnapshot('f1', bad, { version: 1, clean: null, sync: null })).rejects.toThrow();
+				await expect(
+					derived.saveSnapshot('f1', bad, { version: 1, clean: null, sync: null }),
+				).rejects.toThrow();
 			}
 		});
 

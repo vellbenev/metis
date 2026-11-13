@@ -7,15 +7,7 @@
 import { nanoid } from 'nanoid';
 import { copyInto, segment, walk, type Dir } from './dir';
 import { assertNoSecrets } from './secrets';
-import type {
-	CleanNote,
-	HistorySnapshot,
-	RawNote,
-	SyncState,
-	Textbook,
-	TextbookOutline,
-	VaultMeta,
-} from './types';
+import type { CleanNote, HistorySnapshot, RawNote, SyncState, Textbook, TextbookOutline, VaultMeta } from './types';
 
 export const META_FILE = 'metis.vault.json';
 export const NOTES_DIR = 'notes';
