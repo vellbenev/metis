@@ -127,6 +127,15 @@ interface Textbook {
 
 The position of a block in the document is not part of its hash.
 
+Storage rules:
+
+- Folders may nest to any depth; notes may also sit directly under `notes/`.
+- Renaming a note also changes its `title`.
+- `createdAt` in `metis.vault.json` is milliseconds since epoch.
+- A history snapshot is `{ version, clean, sync }`.
+- A folder vault is not remembered between sessions; the user picks it again.
+- Names are compared case-insensitively after NFC normalisation, so collisions are detected on every disk.
+
 ## 6. Clean pipeline (per file, incremental)
 
 ### 6.1 Persian normalisation (deterministic, before hashing and before the model)
@@ -219,9 +228,10 @@ interface ProviderSettings {
 **Decided.** TypeScript, React, Vite (static build, no server), TipTap v3 (>= 3.7, ProseMirror) for the editor, Vitest
 for tests, File System Access API for vault storage with an IndexedDB fallback. No backend.
 
-Licensing rule: only open-source (MIT-compatible) dependencies. The TipTap core and its open-source extensions
-(including `@tiptap/markdown`) are free; never use `@tiptap-pro/*`, TipTap Cloud, or any package that needs a paid
-licence or an account.
+Licensing rule: only permissive open-source dependencies (MIT, Apache-2.0, BSD, ISC). Dev-only test tools such as
+`fake-indexeddb` (Apache-2.0) are fine. Never use copyleft (GPL/AGPL) or anything paid or account-bound: no
+`@tiptap-pro/*`, no TipTap Cloud. The TipTap core and its open-source extensions (including `@tiptap/markdown`) are
+free.
 
 Note: `@tiptap/markdown` is an early release with possible edge cases; the custom marks (`aiAdded`, `gap`) need custom
 serialisers.
@@ -268,6 +278,8 @@ network access except to the configured provider.
 - Fixtures: `zkp-01-basics.txt` -> clean; append `zkp-01-basics.day2.txt` -> clean again: only new/changed blocks hit
   the mock provider (I3); raw hashes unchanged (I1).
 - Clean button on a file; clean twin stored under `.metis/`.
+- Clean and textbook code receive only a note reader and the derived-data store, never the full `VaultStore` (keeps I1
+  structural).
 
 ### S5 — Parallel view, highlights, undo
 
