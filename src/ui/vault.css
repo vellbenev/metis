@@ -1,0 +1,122 @@
+.shell {
+	display: flex;
+	align-items: flex-start;
+	min-height: 100vh;
+}
+
+.shell > .page {
+	flex: 1;
+	min-width: 0;
+}
+
+.file-tree {
+	width: 15rem;
+	flex-shrink: 0;
+	padding: 2rem 1rem;
+	font-size: 0.85rem;
+	line-height: 1.7;
+	color: var(--ink-soft);
+	border-inline-end: 1px solid var(--rule);
+	min-height: 100vh;
+}
+
+.file-tree ul {
+	list-style: none;
+	margin: 0;
+	padding-inline-start: 0.9rem;
+}
+
+.file-tree > ul {
+	padding-inline-start: 0;
+}
+
+.file-tree button {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+
+.tree-folder {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 0.5rem;
+	color: var(--ink);
+}
+
+.tree-root {
+	margin-bottom: 0.5rem;
+}
+
+.tree-actions {
+	display: inline-flex;
+	gap: 0.4rem;
+	opacity: 0;
+	font-size: 0.75rem;
+}
+
+.tree-folder:hover .tree-actions,
+.tree-folder:focus-within .tree-actions,
+.tree-root .tree-actions {
+	opacity: 1;
+}
+
+.tree-note {
+	display: block;
+	width: 100%;
+	text-align: start;
+	border-radius: 4px;
+	padding-inline: 0.3rem !important;
+}
+
+.tree-note:hover,
+.tree-note[aria-current='page'] {
+	background: var(--code-bg);
+	color: var(--ink);
+}
+
+.tree-form input {
+	width: 100%;
+	font: inherit;
+	color: var(--ink);
+	background: var(--paper);
+	border: 1px solid var(--rule);
+	border-radius: 4px;
+	padding: 0 0.3rem;
+}
+
+.vault-pick {
+	text-decoration: underline;
+}
+
+.tree-error {
+	color: #8a3b22;
+}
+
+.tree-hint {
+	margin-top: 2rem;
+	font-size: 0.75rem;
+	opacity: 0.7;
+}
+
+@media (max-width: 40rem) {
+	.shell {
+		flex-direction: column;
+	}
+
+	.file-tree {
+		width: 100%;
+		min-height: 0;
+		border-inline-end: none;
+		border-bottom: 1px solid var(--rule);
+	}
+}
+
+.save-error {
+	font-size: 0.8rem;
+	color: #8a3b22;
+	margin: 0 0 1rem;
+}

@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest';
+import { assertNoSecrets } from './secrets';
+
+describe('assertNoSecrets (I5)', () => {
+	it('rejects keys that name a secret anywhere in the key, at any depth', () => {
+		const keys = [
+			'apiKey',
+			'api_key',
+			'API-KEY',
+			'openaiApiKey',
+			'x-api-key',
+			'apiKeys',
+			'token',
+			'refreshToken',
+			'clientSecret',
+			'password',
+			'Authorization',
+			'bearer',
+		];
+		for (const key of keys) {
+			expect(() => assertNoSecrets({ [key]: 'x' }), key).toThrow(/secret/);
+			expect(() => assertNoSecrets({ a: [{ b: { [key]: 'x' } }] }), key).toThrow(/\$\.a\[0\]\.b/);
+		}
+	});
+
+	it('accepts ordinary notes and derived data, whatever the text says', () => {
+		const doc = {
+			type: 'doc',
+			content: [
+				{ type: 'heading', attrs: { id: 'aB3_xY9-kLmN', level: 2, textAlign: 'right' } },
+				{
+					type: 'paragraph',
+					attrs: { id: 'p1', sources: ['a', 'b'], changedIn: 3 },
+					content: [
+						{ type: 'text', text: 'my apiKey is a token: secret password', marks: [{ type: 'bold' }] },
+						{
+							type: 'text',
+							text: 'zk-SNARK',
+							marks: [
+								{ type: 'link', attrs: { href: 'x', target: '_blank', rel: 'noopener', class: null } },
+								{ type: 'aiAdded', attrs: { accepted: false } },
+								{ type: 'gap' },
+							],
+						},
+					],
+				},
+				{ type: 'codeBlock', attrs: { id: 'c1', language: 'ts' } },
+				{ type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph' }] }] },
+			],
+		};
+		expect(() => assertNoSecrets({ version: 1, fileId: 'f', title: 'کلید API', doc })).not.toThrow();
+		expect(() =>
+			assertNoSecrets({ version: 1, name: 'ZKP', createdAt: 1, defaults: { rewriteLevel: 'structure' } }),
+		).not.toThrow();
+		expect(() =>
+			assertNoSecrets({
+				version: 1,
+				revision: 2,
+				blocks: { id1: { rawHash: 'ab', cleanIds: [], lastRevision: 2 } },
+			}),
+		).not.toThrow();
+	});
+
+	it('treats keys of id-keyed records as data, but still checks what is inside them', () => {
+		const block = { rawHash: 'ab', cleanIds: ['c1'], lastRevision: 1 };
+		const sync = { version: 1, revision: 1, blocks: { xTOKEN9ab_cd: block, aSecret_1234: block } };
+		expect(() => assertNoSecrets(sync)).not.toThrow();
+		const textbook = {
+			version: 1,
+			builtAt: 1,
+			sections: {
+				'access-tokens': { doc: { type: 'doc' }, sourceRevisions: { 'token-file': 1 } },
+			},
+			gaps: [{ sectionId: 'access-tokens', note: 'x' }],
+		};
+		expect(() => assertNoSecrets(textbook)).not.toThrow();
+
+		expect(() => assertNoSecrets({ ...sync, blocks: { id1: { ...block, apiKey: 'x' } } })).toThrow(/secret/);
+		expect(() =>
+			assertNoSecrets({
+				...textbook,
+				sections: { s1: { doc: { type: 'doc' }, sourceRevisions: {}, token: 'x' } },
+			}),
+		).toThrow(/secret/);
+		expect(() => assertNoSecrets({ ...textbook, apiKey: 'x' })).toThrow(/secret/);
+		expect(() => assertNoSecrets({ ...sync, blocks: { sections: { token: 'x' } } })).toThrow(/secret/);
+	});
+});
