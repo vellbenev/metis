@@ -48,9 +48,24 @@ export function errorFromStatus(status: number, detail: string): ProviderError {
 }
 
 export function errorFromFetchFailure(err: unknown, baseUrl: string, origin: string): ProviderError {
-	if ((err as { name?: unknown } | null)?.name === 'AbortError') return new ProviderError('aborted', 'درخواست لغو شد');
+	if ((err as { name?: unknown } | null)?.name === 'AbortError')
+		return new ProviderError('aborted', 'درخواست لغو شد');
 	if (isLocalBaseUrl(baseUrl)) {
-		return new ProviderError('cors-local', `اتصال به ${baseUrl} برقرار نشد. ${ollamaOriginsHint(origin)}`);
+		return new ProviderError(
+			'cors-local',
+			`اتصال به ${baseUrl} برقرار نشد. شاید سرور محلی (مثلاً Ollama) در حال اجرا نیست؛ آن را اجرا کنید. ${ollamaOriginsHint(origin)}`,
+		);
 	}
 	return new ProviderError('network', `اتصال به ${baseUrl} برقرار نشد`);
+}
+
+/** Replaces every occurrence of the API key in error text, so a key never reaches the UI or a log. */
+export function redactSecret(text: string, secret: string | undefined): string {
+	const key = secret?.trim();
+	return key ? text.split(key).join('[redacted]') : text;
+}
+
+export function redactError(err: ProviderError, secret: string | undefined): ProviderError {
+	const message = redactSecret(err.message, secret);
+	return message === err.message ? err : new ProviderError(err.kind, message, err.status);
 }

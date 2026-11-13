@@ -111,9 +111,12 @@ describe('error mapping', () => {
 		});
 		const origin = 'http://localhost:5173';
 		for (const baseUrl of ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1', 'http://box.lan:11434/v1']) {
-			const err = await failure(createOpenAIProvider({ ...ollama, baseUrl }, { fetch, origin }).complete({ messages }));
+			const err = await failure(
+				createOpenAIProvider({ ...ollama, baseUrl }, { fetch, origin }).complete({ messages }),
+			);
 			expect(err.kind).toBe('cors-local');
 			expect(err.message).toContain(`OLLAMA_ORIGINS=${origin}`);
+			expect(err.message).toContain('در حال اجرا نیست');
 		}
 	});
 
@@ -159,5 +162,77 @@ describe('network discipline (I6)', () => {
 		createOpenAIProvider(ollama);
 		createOpenAIProvider(router);
 		expect(fetch).not.toHaveBeenCalled();
+	});
+});
+
+describe('redirects (I6)', () => {
+	/** Behaves like fetch against a server that answers 307: with redirect 'error' it rejects, otherwise it follows. */
+	function redirectingFetch() {
+		const fetch: ReturnType<typeof vi.fn<FetchFn>> = vi.fn<FetchFn>(async (url, init) => {
+			if (url.startsWith('https://evil.example/')) return okResponse('stolen');
+			if (init.redirect === 'error') throw new TypeError('Failed to fetch: redirect');
+			return fetch('https://evil.example/collect', init);
+		});
+		return fetch;
+	}
+
+	it('passes redirect: error so a redirect is rejected and nothing reaches another host', async () => {
+		const fetchSpy = redirectingFetch();
+		const err = await failure(createOpenAIProvider(router, { fetch: fetchSpy }).complete({ messages }));
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(fetchSpy.mock.calls[0][0]).toBe('https://openrouter.example/api/v1/chat/completions');
+		expect(fetchSpy.mock.calls[0][1].redirect).toBe('error');
+		expect(err.kind).toBe('network');
+	});
+
+	it('a rejected redirect against a local server maps to cors-local', async () => {
+		const fetchSpy = redirectingFetch();
+		const err = await failure(createOpenAIProvider(ollama, { fetch: fetchSpy }).complete({ messages }));
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(err.kind).toBe('cors-local');
+	});
+});
+
+describe('API key redaction', () => {
+	const key = 'sk-or-v1-SECRET0123456789abcdef';
+	const profile: ProviderProfile = { ...router, apiKey: key };
+
+	it('redacts the key from a JSON server error body', async () => {
+		const fetch = spyFetch(
+			() => new Response(JSON.stringify({ error: { message: `Invalid key ${key} given` } }), { status: 401 }),
+		);
+		const err = await failure(createOpenAIProvider(profile, { fetch }).complete({ messages }));
+		expect(err.kind).toBe('auth');
+		expect(err.message).not.toContain(key);
+		expect(err.message).toContain('[redacted]');
+	});
+
+	it('redacts the key from a raw text body, even where truncation would cut it', async () => {
+		const body = `${'x'.repeat(190)}${key} tail`;
+		const fetch = spyFetch(() => new Response(body, { status: 500 }));
+		const err = await failure(createOpenAIProvider(profile, { fetch }).complete({ messages }));
+		expect(err.kind).toBe('server');
+		expect(err.message).not.toContain(key.slice(0, 10));
+	});
+
+	it('redacts the key from a non-provider error thrown by fetch', async () => {
+		const fetch = vi.fn<FetchFn>(async () => {
+			throw new TypeError(`bad header Bearer ${key}`);
+		});
+		const err = await failure(createOpenAIProvider(profile, { fetch }).complete({ messages }));
+		expect(err.message).not.toContain(key);
+	});
+
+	it('redacts the key when it appears in the baseUrl of a network error', async () => {
+		const fetch = vi.fn<FetchFn>(async () => {
+			throw new TypeError('Failed to fetch');
+		});
+		const err = await failure(
+			createOpenAIProvider({ ...profile, baseUrl: `https://api.example/${key}/v1` }, { fetch }).complete({
+				messages,
+			}),
+		);
+		expect(err.message).not.toContain(key);
+		expect(err.message).toContain('[redacted]');
 	});
 });
