@@ -14,7 +14,14 @@ export type CleanBlockSpec =
 	| { type: 'heading'; level: number; text: Inline; sources: BlockId[] }
 	| { type: 'bulletList' | 'orderedList'; items: Inline[]; sources: BlockId[] };
 
-export type ParseResult = { ok: true; blocks: CleanBlockSpec[] } | { ok: false; error: string };
+/**
+ * `missingTerms`: Latin terms of the input not found in the output. Output missing a term is still
+ * structurally valid; the caller retries once and then accepts it with a gap mark (SPEC 6.2 step 5).
+ */
+export type ParseResult = { ok: true; blocks: CleanBlockSpec[]; missingTerms: string[] } | { ok: false; error: string };
+
+/** The error text sent back to the model when terms are missing. */
+export const missingTermsError = (terms: string[]) => `Latin terms must be kept as written: ${terms.join(', ')}`;
 
 class Invalid extends Error {}
 
@@ -172,16 +179,16 @@ function checkCode(blocks: CleanBlockSpec[], inputCode: string[]): void {
 	if (missing.length > 0) throw new Invalid(`inline code must be copied exactly: ${missing.map(c => JSON.stringify(c)).join(', ')}`);
 }
 
-/** Every Latin term of the batch input must still be in the output (SPEC 6.4); see `missingTerms`. */
-function checkTerms(blocks: CleanBlockSpec[], inputTerms: string[]): void {
+/** The Latin terms of the batch input that are not in the output (SPEC 6.4); see `missingTerms`. */
+function checkTerms(blocks: CleanBlockSpec[], inputTerms: string[]): string[] {
 	const text = blocks.map(b => ('items' in b ? b.items : [b.text]).map(i => i.map(s => s.text).join('')).join('\n')).join('\n');
-	const missing = missingTerms(text, inputTerms);
-	if (missing.length > 0) throw new Invalid(`Latin terms must be kept as written: ${missing.join(', ')}`);
+	return missingTerms(text, inputTerms);
 }
 
 /**
  * Validates a model reply: schema, source ids from the batch only, no empty output, every inline
- * code span of the input (`inputCode`) copied exactly, and every Latin term (`inputTerms`) kept.
+ * code span of the input (`inputCode`) copied exactly. Latin terms (`inputTerms`) not kept are listed
+ * in `missingTerms` of a valid result.
  */
 export function parseCleanOutput(
 	content: string,
@@ -207,8 +214,7 @@ export function parseCleanOutput(
 		const missing = batchIds.filter(id => !covered.has(id));
 		if (missing.length > 0) throw new Invalid(`no output block has source ${missing.map(id => JSON.stringify(id)).join(', ')}`);
 		checkCode(blocks, inputCode);
-		checkTerms(blocks, inputTerms);
-		return { ok: true, blocks };
+		return { ok: true, blocks, missingTerms: checkTerms(blocks, inputTerms) };
 	} catch (e) {
 		if (e instanceof Invalid) return { ok: false, error: e.message };
 		throw e;
@@ -253,11 +259,23 @@ export function specToNode(spec: CleanBlockSpec, id: BlockId, changedIn: number)
 	}
 }
 
-/** A verbatim copy of a raw block (code, horizontal rule, ...) as a clean block; its text is marked `rewrite`. */
+/**
+ * Marks every non-added span of a clean block `gap`: used when a Latin term of its sources is still
+ * missing after the retry, so the block shows it is unresolved.
+ */
+export function markGap(spec: CleanBlockSpec): void {
+	for (const span of spansOf(spec)) if (!span.ai) span.gap = true;
+}
+
+/**
+ * A verbatim copy of a raw block (code, horizontal rule, ...) as a clean block. Its text is marked
+ * `rewrite`, except in a code block, which allows no marks (I4 exempts code blocks).
+ */
 export function verbatimNode(raw: JSONNode, id: BlockId, source: BlockId, changedIn: number): JSONNode {
+	const isCode = raw.type === 'codeBlock';
 	const mark = (node: JSONNode): JSONNode => {
 		const out: JSONNode = { ...node };
-		if (typeof node.text === 'string') out.marks = [...(node.marks ?? []), REWRITE];
+		if (typeof node.text === 'string' && !isCode) out.marks = [...(node.marks ?? []), REWRITE];
 		if (node.content) out.content = node.content.map(mark);
 		return out;
 	};

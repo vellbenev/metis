@@ -10,8 +10,10 @@ const STRONG = '\\p{Script=Latin}0-9';
 /**
  * A Latin run starts with a Latin letter or digit and ends with one (or `/`, for URLs); inside, it may
  * hold spaces and ASCII punctuation, so "chat completion" or "http://localhost:11434/v1" stay one run.
+ * A `.` right before the first letter at the start of a word (.NET), and `+` or `#` right after the
+ * last one (C++, C#), belong to the run.
  */
-const RUN = new RegExp(`[${STRONG}](?:[${STRONG} !-/:-@[-\`{-~]*[${STRONG}/])?`, 'gu');
+const RUN = new RegExp(`(?:(?<!\\S)\\.)?[${STRONG}](?:[${STRONG} !-/:-@[-\`{-~]*[${STRONG}/])?(?:(?<=[${STRONG}])[+#]+)?`, 'gu');
 
 /** Splits text into Latin (ltr) and other segments, in order; joined, they give the text back. */
 export function splitLatinRuns(text: string): BidiSegment[] {
