@@ -53,7 +53,8 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
   was deleted. A raw block whose hash is unchanged and that shares no clean block with a changed or deleted block causes
   zero model calls and its clean block stays byte-identical. Tested with a mock provider that counts calls.
 - **I4 Provenance**: every text span in a clean doc or textbook carries provenance; `aiAdded` spans carry the `aiAdded`
-  mark and are visually distinct until accepted.
+  mark and are visually distinct until accepted. Code block text in the textbook carries no mark (TipTap code blocks
+  allow none); the rule skips code blocks.
 - **I5 No secrets in vaults**: API keys live only in browser storage, never in any file under a vault.
 - **I6 Network discipline**: the app makes no network request except to the configured provider `baseUrl`. All fonts and
   assets are bundled (no CDNs).
@@ -75,6 +76,7 @@ A **vault** is one topic (e.g. "ZKP") containing folders and note files.
     history/<fileId>/<revision>.json   # snapshots for undo
     textbook/outline.json          # TextbookOutline
     textbook/textbook.json         # Textbook (derived)
+    textbook/history/<n>.json      # textbook snapshots for undo: { version, outline, textbook }
 ```
 
 Folders and files under `notes/` mirror what the user sees. Everything under `.metis/` is derived and may be deleted and
@@ -166,7 +168,8 @@ Storage rules:
    output: `{"blocks": [...]}` (a bare array is also accepted) of clean blocks, each with `sources: BlockId[]` (ids
    from the batch only).
 5. Validate (schema, source ids exist, every batch block is a source of some output block, no empty output, every
-   input inline code span copied byte-identical; an invented code span becomes plain text). Retry once on invalid
+   input inline code span copied byte-identical, every Latin term of the batch kept (6.4); an invented code span becomes
+   plain text; a `*` or `**` with no partner is read as text, the other markers still format). Retry once on invalid
    output; on second failure leave that batch untouched and report it. A provider error (network, auth, ...) aborts
    the whole run and writes nothing.
 6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
@@ -189,7 +192,12 @@ Storage rules:
 - Leave URLs, code and digits unchanged. Keep the inline Markdown; copy `code` spans byte for byte.
 - Join `ای`, `ام`, `ات`, `اش` with ZWNJ only where they are suffixes (not the vocative `ای`).
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
-- Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them.
+- Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them. Enforced in code: the batch's
+  Latin terms are listed in the request (`latinTerms`), and an output missing one is invalid (6.2 step 5). A term is a
+  run of Latin letters and digits that starts with a letter, with inner `-`, `_` or `.` joining parts (`zk-SNARK`,
+  `Node.js`, `ERC-20`); inline code, URLs, e-mail addresses and single letters are skipped. In the output a term must
+  occur as a whole Latin word; case, formatting, hyphen variants (`‑`, `–`) and a Persian suffix (`prover‌ها`) are
+  accepted.
 - Unclear or incomplete notes: wrap the span in a `gap` mark; never guess.
 - Enrichment setting `off` | `flag-gaps` (default) | `light-add`. Only `light-add` may add text, and only inside an
   incomplete sentence, a few words to a sentence, marked `aiAdded`. Never new headings, never new paragraphs.
@@ -198,12 +206,16 @@ Storage rules:
 
 - Input: clean twins only (never raw).
 - Outline is a stable skeleton (`outline.json`). On each build the model proposes a small _delta_ (add / rename / merge
-  / reorder sections); the delta is applied, highlighted, and undoable.
-- A section is regenerated only if any of its source files has a newer clean revision than `sourceRevisions` (I7).
+  / reorder sections, and assign: put a file into an existing section); the delta is applied, highlighted, and undoable
+  (snapshot under `textbook/history/`).
+- Unaccepted `aiAdded` text in a clean twin is left out of the textbook input. Raw note titles never reach the model,
+  so section titles come from clean content.
+- A section is regenerated only if any of its source files has a newer clean revision than `sourceRevisions` (I7), or
+  if its file list changed (merge, assign).
 - Strict by default: content comes from the notes. Gaps are collected in `gaps`. With `light-add` the model may complete
   an incomplete sentence inline (marked `aiAdded`), never add a section or heading.
 - **Stale indicator** (pure function `countStaleFiles`): the number of files whose clean revision is newer than what the
-  textbook was built from. Shown as a quiet count beside the vault, never a popup. There is no threshold and no rule:
+  textbook was built from; a file in no section counts as stale. Shown as a quiet count beside the vault, never a popup. There is no threshold and no rule:
   the user decides when to build.
 
 ## 8. AI provider layer
@@ -222,9 +234,13 @@ interface ProviderSettings {
 ```
 
 - One client for the OpenAI-compatible `POST {baseUrl}/chat/completions` API (works for Ollama `/v1` and OpenRouter).
+- The client strips reasoning from every reply before anyone parses it (both profiles and Test model): every
+  `<think>...</think>` block; a `</think>` with no opening tag drops everything before it; an unclosed `<think>` drops
+  everything after it, so a reply cut off while reasoning is empty and fails validation.
 - Settings live in browser storage (IndexedDB), never in a vault (I5).
 - **Test model** button: sends a fixed Persian paragraph from the fixtures and checks: non-empty reply, Latin terms
-  preserved, valid JSON when JSON was requested; reports latency.
+  preserved, valid JSON when JSON was requested; reports latency. Latin runs in the results are isolated (`<bdi
+  dir="ltr">`) so mixed Persian/Latin text renders in order.
 - On a network error that looks like CORS against a local Ollama, show: set `OLLAMA_ORIGINS` to this app's origin.
 
 ## 9. UI
@@ -329,3 +345,8 @@ Decided by Hooman:
 3. No thresholds for the textbook: only a quiet stale-file count.
 4. Default enrichment mode is `flag-gaps`. The user can switch to `light-add` after testing the chosen model with the
    Test model button.
+5. Textbook (accepted from the S6 build): the `assign` delta op; undo snapshots at `.metis/textbook/history/<n>.json`; a
+   section is also regenerated when its file list changes; a file in no section is stale; unaccepted `aiAdded` text is
+   left out of the textbook input; section titles come from clean content (section 7).
+6. Model replies: `<think>` blocks are stripped in the provider client (section 8); Latin terms are enforced in code
+   (6.4).
