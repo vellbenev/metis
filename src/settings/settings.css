@@ -1,0 +1,58 @@
+.settings-entry {
+	margin-bottom: 1.5rem;
+	font-size: 0.9rem;
+}
+
+.settings-entry button {
+	font: inherit;
+	color: var(--ink);
+	background: none;
+	border: 1px solid var(--rule);
+	border-radius: 4px;
+	padding: 0.1rem 0.75rem;
+	cursor: pointer;
+}
+
+.settings-entry button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.settings {
+	display: grid;
+	gap: 1rem;
+	margin-top: 1rem;
+}
+
+.settings-profile {
+	display: grid;
+	gap: 0.5rem;
+	border: 1px solid var(--rule);
+	border-radius: 4px;
+}
+
+.settings label {
+	display: grid;
+	gap: 0.2rem;
+}
+
+.settings input,
+.settings select {
+	font: inherit;
+	color: var(--ink);
+	background: var(--paper);
+	border: 1px solid var(--rule);
+	border-radius: 4px;
+	padding: 0.2rem 0.5rem;
+}
+
+.settings-note,
+.settings-report {
+	color: var(--ink-soft);
+	margin: 0;
+}
+
+.settings-error {
+	margin: 0;
+	color: #8a2b1d;
+}

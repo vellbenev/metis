@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 // I6: the built app makes no network requests of its own and loads nothing remote.
 describe('production build (I6)', () => {
-	it('contains no fetch( call and no remote URL references', async () => {
+	it('contains one fetch( call (the provider client) and no remote URL references', async () => {
 		const result = await build({
 			root: join(import.meta.dirname, '..'),
 			logLevel: 'silent',
@@ -17,8 +17,11 @@ describe('production build (I6)', () => {
 		}));
 		expect(files.some(f => f.name.endsWith('.js'))).toBe(true);
 		expect(files.some(f => /vazirmatn.*\.woff2$/.test(f.name))).toBe(true);
+		// The only fetch is the provider client's POST to the configured baseUrl (src/provider/openai.ts).
+		const fetchCalls = files.flatMap(f => [...f.text.matchAll(/\bfetch\s*\(/g)].map(() => f.name));
+		expect(fetchCalls).toHaveLength(1);
+		expect(files.find(f => f.name === fetchCalls[0])!.text).toContain('/chat/completions');
 		for (const f of files) {
-			expect(f.text, f.name).not.toMatch(/\bfetch\s*\(/);
 			if (f.name.endsWith('.html') || f.name.endsWith('.css')) {
 				expect(f.text, f.name).not.toMatch(/(?:src|href)=["']?(?:https?:)?\/\//);
 				expect(f.text, f.name).not.toMatch(/url\(["']?(?:https?:)?\/\//);

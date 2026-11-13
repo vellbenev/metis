@@ -1,5 +1,6 @@
 import { EditorContent, useEditor } from '@tiptap/react';
 import { editorExtensions } from './editor/extensions';
+import { SettingsEntry } from './settings/SettingsEntry';
 
 export function App() {
 	const editor = useEditor({
@@ -9,6 +10,7 @@ export function App() {
 
 	return (
 		<main className='page'>
+			<SettingsEntry />
 			<EditorContent editor={editor} />
 		</main>
 	);
