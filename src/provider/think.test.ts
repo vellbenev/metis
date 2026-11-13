@@ -19,17 +19,25 @@ describe('stripThinking', () => {
 		expect(stripThinking('<think>\nfirst\n{"no": 1}\n</think>\n\n{"a": 1}')).toBe('{"a": 1}');
 	});
 
-	it('removes several think blocks, wherever they are, case-insensitively', () => {
-		expect(stripThinking('<think>a</think>{"a":<THINK>b\nc</Think> 1}<think></think>')).toBe('{"a": 1}');
+	it('removes several leading think blocks, case-insensitively', () => {
+		expect(stripThinking('  <think>a</think>\n<THINK>b\nc</Think> {"a": 1}')).toBe('{"a": 1}');
 	});
 
-	it('drops everything up to a closing tag that has no opening tag', () => {
-		expect(stripThinking('reasoning {"x": 0}\n</think>\n{"a": 1}')).toBe('{"a": 1}');
+	it('drops everything up to an orphan leading closing tag', () => {
+		expect(stripThinking('reasoning about it\n</think>\n{"a": 1}')).toBe('{"a": 1}');
 	});
 
-	it('treats an unclosed think block as reasoning to the end, so the answer is empty and invalid', () => {
+	it('treats an unclosed leading think block as reasoning to the end, so the answer is empty and invalid', () => {
 		expect(stripThinking('<think>\nthe answer could be {"a": 1}')).toBe('');
-		expect(stripThinking('<think>a</think>{"a": 1}<think>cut off')).toBe('{"a": 1}');
+	});
+
+	it('keeps think tags the notes quote inside the answer', () => {
+		const quoted = (text: string) => JSON.stringify({ blocks: [{ type: 'paragraph', text, sources: ['a'] }] });
+		for (const text of ['model با <think> فکر می‌کند', 'تگ <think>x</think> در خروجی', 'فقط </think> بسته', '</think> اول']) {
+			expect(stripThinking(quoted(text))).toBe(quoted(text));
+			expect(JSON.parse(stripThinking(`<think>r</think>${quoted(text)}`)).blocks[0].text).toBe(text);
+		}
+		expect(stripThinking('{"a": 1}<think>later</think>')).toBe('{"a": 1}<think>later</think>');
 	});
 });
 

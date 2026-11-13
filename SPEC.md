@@ -234,9 +234,10 @@ interface ProviderSettings {
 ```
 
 - One client for the OpenAI-compatible `POST {baseUrl}/chat/completions` API (works for Ollama `/v1` and OpenRouter).
-- The client strips reasoning from every reply before anyone parses it (both profiles and Test model): every
-  `<think>...</think>` block; a `</think>` with no opening tag drops everything before it; an unclosed `<think>` drops
-  everything after it, so a reply cut off while reasoning is empty and fails validation.
+- The client strips a leading reasoning prefix from every reply before anyone parses it (both profiles and Test
+  model): `<think>...</think>` blocks at the start; an orphan `</think>` drops everything before it, only when no
+  `<think>` precedes it and the reply does not start with `{`, `[` or a code fence; an unclosed leading `<think>` makes
+  the reply empty, so it fails validation. Tags elsewhere (quoted by the notes) are kept.
 - Settings live in browser storage (IndexedDB), never in a vault (I5).
 - **Test model** button: sends a fixed Persian paragraph from the fixtures and checks: non-empty reply, Latin terms
   preserved, valid JSON when JSON was requested; reports latency. Latin runs in the results are isolated (`<bdi

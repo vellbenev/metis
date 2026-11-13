@@ -1,27 +1,38 @@
 // Reasoning models (Qwen3, DeepSeek-R1, ...) may put their reasoning in <think>...</think> before the
-// answer. It is never part of the answer, so it is removed before any reply is parsed.
+// answer. It is never part of the answer, so it is removed before any reply is parsed. Only a leading
+// reasoning prefix is removed: tags later in the reply may be the user's own text (a note about AI that
+// quotes <think>) and are kept as they are.
 
-const OPEN = /<think>/i;
+const LEADING_OPEN = /^\s*<think>/i;
 const CLOSE = /<\/think>/i;
+/** The answer has already started: JSON or a code fence. */
+const ANSWER_START = /^\s*(?:[{[]|```)/;
 
 /**
- * Removes reasoning blocks from a model reply:
- * - every `<think>...</think>` block (multiline, any number, tags matched case-insensitively);
- * - a `</think>` with no `<think>` before it (some chat templates put the opening tag in the prompt):
- *   everything up to and including it;
- * - an unclosed `<think>` (the reply was cut off while reasoning): everything from it to the end.
- *   What is left is usually empty, so the reply fails validation and is retried or reported, rather
- *   than reasoning text being parsed as the answer.
- * A reply without think tags is returned unchanged; otherwise the result is trimmed.
+ * Removes the reasoning prefix of a model reply:
+ * - one or more `<think>...</think>` blocks at the start (leading whitespace allowed, tags matched
+ *   case-insensitively, any number of lines);
+ * - an orphan `</think>` (some chat templates put the opening tag in the prompt): everything up to and
+ *   including the first `</think>`, but only when the reply has no `<think>` before it and does not
+ *   start like an answer (`{`, `[` or a code fence);
+ * - an unclosed leading `<think>` (the reply was cut off while reasoning): the result is empty, so the
+ *   reply fails validation and is retried or reported, rather than reasoning being parsed as the answer.
+ * Tags anywhere else are kept. A reply without a reasoning prefix is returned unchanged; otherwise the
+ * result is trimmed.
  */
 export function stripThinking(content: string): string {
-	if (!OPEN.test(content) && !CLOSE.test(content)) return content;
 	let text = content;
+	let stripped = false;
 	const close = CLOSE.exec(text);
-	const open = OPEN.exec(text);
-	if (close && (!open || close.index < open.index)) text = text.slice(close.index + close[0].length);
-	text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-	const unclosed = OPEN.exec(text);
-	if (unclosed) text = text.slice(0, unclosed.index);
-	return text.trim();
+	if (close && !ANSWER_START.test(text) && !/<think>/i.test(text.slice(0, close.index))) {
+		text = text.slice(close.index + close[0].length);
+		stripped = true;
+	}
+	while (LEADING_OPEN.test(text)) {
+		const end = CLOSE.exec(text);
+		if (!end) return '';
+		text = text.slice(end.index + end[0].length);
+		stripped = true;
+	}
+	return stripped ? text.trim() : content;
 }
