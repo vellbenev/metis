@@ -1,15 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { hasFolderAccess, IdbVaults, pickFolderVault } from '../vault/backends';
 import type { VaultPath, VaultStore } from '../vault/store';
 import { FileTree, type FileTreeProps } from './FileTree';
 import './vault.css';
 
-export interface VaultPanelProps extends Omit<FileTreeProps, 'store' | 'onOpen'> {
+export interface VaultPanelProps extends Omit<FileTreeProps, 'store' | 'onOpen' | 'aside'> {
 	onOpen(store: VaultStore, path: VaultPath): void;
+	/** Vault-level controls shown beside the vault name. */
+	aside?(store: VaultStore): ReactNode;
 }
 
 /** Chooses a vault (a folder on disk, or IndexedDB when folders are unavailable) and shows its tree. */
-export function VaultPanel({ onOpen, ...treeProps }: VaultPanelProps) {
+export function VaultPanel({ onOpen, aside, ...treeProps }: VaultPanelProps) {
 	const [store, setStore] = useState<VaultStore>();
 	const [error, setError] = useState<string>();
 
@@ -23,7 +25,7 @@ export function VaultPanel({ onOpen, ...treeProps }: VaultPanelProps) {
 		}
 	}
 
-	if (store) return <FileTree store={store} onOpen={path => onOpen(store, path)} {...treeProps} />;
+	if (store) return <FileTree store={store} onOpen={path => onOpen(store, path)} aside={aside?.(store)} {...treeProps} />;
 
 	return (
 		<nav className='file-tree' aria-label='مخزن'>
