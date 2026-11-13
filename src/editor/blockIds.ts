@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core';
 import { Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state';
-import type { Mapping } from '@tiptap/pm/transform';
+import { ReplaceStep, type Mapping } from '@tiptap/pm/transform';
 import { nanoid } from 'nanoid';
 
 // Node types that can appear at the top level of a document and therefore carry a block id.
@@ -38,7 +38,7 @@ export function fixIds(
 	state: EditorState,
 	seen: Set<string>,
 	generate: () => string,
-	previous?: { doc: PMNode; mapping: Mapping },
+	previous?: { doc: PMNode; mapping: Mapping; wholeReplace: boolean },
 ): Transaction | null {
 	const { doc } = state;
 	const tr = state.tr;
@@ -59,10 +59,40 @@ export function fixIds(
 		}
 	});
 
+	// In-place type changes (paragraph -> list, list -> paragraph) rebuild the top-level node.
+	// The id of the block it came from, now gone from the top level, moves to the new node.
+	const missing = new Set([...oldPos.keys()].filter(id => !byId.has(id)));
+	const adopt = (node: PMNode, offset: number): string | null => {
+		let found: string | null = null;
+		node.descendants(child => {
+			if (!found && child.attrs.id && missing.has(child.attrs.id)) found = child.attrs.id;
+			return !found;
+		});
+		if (!found && previous && !previous.wholeReplace) {
+			for (const id of missing) {
+				const old = previous.doc.nodeAt(oldPos.get(id)!)!;
+				if (previous.mapping.map(oldPos.get(id)!, -1) === offset && old.textContent.includes(node.textContent)) {
+					found = id;
+					break;
+				}
+			}
+		}
+		if (found) missing.delete(found);
+		return found;
+	};
+
 	doc.forEach((node, offset) => {
 		if (!('id' in node.attrs)) return;
 		const id = node.attrs.id as string | null;
 		let keep = !!id;
+		if (!id) {
+			const adopted = adopt(node, offset);
+			if (adopted) {
+				tr.setNodeAttribute(offset, 'id', adopted);
+				changed = true;
+				return;
+			}
+		}
 		if (id) {
 			const positions = byId.get(id)!;
 			if (positions.length > 1) {
@@ -91,10 +121,14 @@ export function fixIds(
 	return tr.setMeta(blockIdsKey, true);
 }
 
-function stripTopLevelIds(slice: Slice): Slice {
+/** Drops top-level ids of the slice that already exist in `doc` (copy); others are kept (cut = move). */
+function stripExistingIds(slice: Slice, doc: PMNode): Slice {
+	const inDoc = new Set<string>();
+	doc.forEach(node => node.attrs.id && inDoc.add(node.attrs.id));
 	const nodes: PMNode[] = [];
 	slice.content.forEach(node => {
-		nodes.push(node.attrs.id ? node.type.create({ ...node.attrs, id: null }, node.content, node.marks) : node);
+		const copy = node.attrs.id && inDoc.has(node.attrs.id);
+		nodes.push(copy ? node.type.create({ ...node.attrs, id: null }, node.content, node.marks) : node);
 	});
 	return new Slice(Fragment.from(nodes), slice.openStart, slice.openEnd);
 }
@@ -103,7 +137,9 @@ function stripTopLevelIds(slice: Slice): Slice {
  * Stable block ids (SPEC I2). Ids live in `attrs.id` of top-level nodes only.
  * - edit / merge: ProseMirror keeps the first node's attrs, so the id stays.
  * - split: the second part does not inherit the id (keepOnSplit: false) and gets a new one.
- * - copy-paste: pasted blocks lose their ids and get new ones.
+ * - type change (paragraph -> heading/list/quote and back): the new node takes the old id.
+ * - paste: a pasted block whose id is already in the document is a copy and gets a new id;
+ *   otherwise it keeps its id (cut-paste is a move).
  * - drag-move: the dragged slice keeps its ids; the original is deleted in the same step.
  */
 export const BlockIds = Extension.create<BlockIdsOptions>({
@@ -158,14 +194,21 @@ export const BlockIds = Extension.create<BlockIdsOptions>({
 					const seen = blockIdsKey.getState(newState) as Set<string>;
 					const mapping = transactions[0].mapping.slice(0);
 					for (const t of transactions.slice(1)) mapping.appendMapping(t.mapping);
-					return fixIds(newState, seen, generate, { doc: oldState.doc, mapping });
+					// Replacing the whole document (e.g. setContent) is not a type change: no id transfer by position.
+					const wholeReplace = transactions.some(t =>
+						t.steps.some(
+							(step, i) =>
+								step instanceof ReplaceStep && step.from === 0 && step.to === t.docs[i].content.size,
+						),
+					);
+					return fixIds(newState, seen, generate, { doc: oldState.doc, mapping, wholeReplace });
 				},
 				props: {
 					transformPasted(slice, view) {
 						// A drag inside the editor carries its own slice; keep ids so a move keeps them.
 						// If it was a copy-drag, the duplicate is resolved in appendTransaction.
 						if (view.dragging && view.dragging.slice === slice) return slice;
-						return stripTopLevelIds(slice);
+						return stripExistingIds(slice, view.state.doc);
 					},
 				},
 			}),

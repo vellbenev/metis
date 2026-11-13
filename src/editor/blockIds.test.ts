@@ -91,18 +91,6 @@ describe('block ids: assignment', () => {
 		);
 	});
 
-	it('strips the id of a block that becomes nested and gives the new list an id', () => {
-		const editor = makeEditor(doc(p('یک', 'aaaaaaaaaaaa'), p('دو', 'bbbbbbbbbbbb')));
-		editor.commands.setTextSelection(blockStart(editor, 1));
-		editor.commands.toggleBulletList();
-		expect(editor.state.doc.child(1).type.name).toBe('bulletList');
-		expect(ids(editor)[0]).toBe('aaaaaaaaaaaa');
-		expectValidIds(editor);
-		editor.state.doc.child(1).descendants(node => {
-			expect(node.attrs.id ?? null).toBeNull();
-		});
-	});
-
 	it('assigns ids to fixture notes', () => {
 		for (const name of ['zkp-01-basics.txt', 'zkp-01-basics.day2.txt', 'zkp-02-snark.txt']) {
 			const source = textToDoc(loadFixture(`persian/${name}`));
@@ -125,11 +113,49 @@ describe('block ids: I2 operations', () => {
 		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'bbbbbbbbbbbb']);
 	});
 
-	it('changing block type keeps the id', () => {
-		const editor = makeEditor(doc(p('عنوان', 'aaaaaaaaaaaa')));
-		editor.chain().setTextSelection(blockStart(editor, 0)).setHeading({ level: 2 }).run();
-		expect(editor.state.doc.child(0).type.name).toBe('heading');
+	it.each([
+		['heading', (e: Editor) => e.commands.setHeading({ level: 2 })],
+		['codeBlock', (e: Editor) => e.commands.setCodeBlock()],
+		['bulletList', (e: Editor) => e.commands.toggleBulletList()],
+		['orderedList', (e: Editor) => e.commands.toggleOrderedList()],
+		['blockquote', (e: Editor) => e.commands.setBlockquote()],
+	])('in-place type change paragraph -> %s keeps the id', (type, change) => {
+		const editor = makeEditor(doc(p('یک', 'aaaaaaaaaaaa'), p('zk-SNARK', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+		editor.commands.setTextSelection(blockStart(editor, 1) + 1);
+		change(editor);
+		expect(editor.state.doc.child(1).type.name).toBe(type);
+		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc']);
+		editor.state.doc.child(1).descendants(node => {
+			expect(node.attrs.id ?? null).toBeNull();
+		});
+	});
+
+	it('in-place type change back (list -> paragraph, heading -> paragraph) keeps the id', () => {
+		const editor = makeEditor(doc(p('یک', 'aaaaaaaaaaaa'), p('دو', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+		editor.commands.setTextSelection(blockStart(editor, 1) + 1);
+		editor.commands.toggleBulletList();
+		editor.commands.toggleBulletList();
+		expect(editor.state.doc.child(1).type.name).toBe('paragraph');
+		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc']);
+		editor.commands.setHeading({ level: 1 });
+		editor.commands.setParagraph();
+		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc']);
+	});
+
+	it('a single-block document keeps its id through list toggles', () => {
+		const editor = makeEditor(doc(p('تنها', 'aaaaaaaaaaaa')));
+		editor.commands.setTextSelection(1);
+		editor.commands.toggleBulletList();
 		expect(ids(editor)[0]).toBe('aaaaaaaaaaaa');
+		editor.commands.toggleBulletList();
+		expect(ids(editor)[0]).toBe('aaaaaaaaaaaa');
+	});
+
+	it('replacing the whole document does not carry old ids over', () => {
+		const editor = makeEditor(doc(p('یک', 'aaaaaaaaaaaa')));
+		editor.commands.setContent(doc(p('یک')));
+		expect(ids(editor)[0]).not.toBe('aaaaaaaaaaaa');
+		expectValidIds(editor);
 	});
 
 	it('split (Enter) keeps the id on the first part and mints a new id for the second', () => {
@@ -176,20 +202,36 @@ describe('block ids: I2 operations', () => {
 		expect(ids(editor)).toEqual(['aaaaaaaaaaaa']);
 	});
 
-	it('drag-move keeps the id', () => {
-		const editor = makeEditor(doc(p('اول', 'aaaaaaaaaaaa'), p('دوم', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+	function drop(editor: Editor, from: number, to: number, copy: boolean) {
 		const view = editor.view;
-		// Drag block 0 and drop it after block 2, through ProseMirror's own drop handler.
-		const sel = NodeSelection.create(editor.state.doc, blockOffset(editor, 0));
+		// Drag block `from` and drop it at the end, through ProseMirror's own drop handler.
+		const sel = NodeSelection.create(editor.state.doc, blockOffset(editor, from));
 		view.dispatch(editor.state.tr.setSelection(sel));
-		view.dragging = { slice: sel.content(), move: true, node: sel } as typeof view.dragging;
-		const dropAt = editor.state.doc.content.size;
-		view.posAtCoords = () => ({ pos: dropAt, inside: -1 });
+		view.dragging = { slice: sel.content(), move: !copy, node: sel } as typeof view.dragging;
+		view.posAtCoords = () => ({ pos: to, inside: -1 });
 		const event = new Event('drop', { bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'dataTransfer', { value: { getData: () => '', types: [] } });
+		// The copy modifier is Alt on macOS and Ctrl elsewhere.
+		Object.defineProperty(event, 'altKey', { value: copy });
+		Object.defineProperty(event, 'ctrlKey', { value: copy });
 		view.dom.dispatchEvent(event);
+	}
+
+	it('drag-move keeps the id', () => {
+		const editor = makeEditor(doc(p('اول', 'aaaaaaaaaaaa'), p('دوم', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+		drop(editor, 0, editor.state.doc.content.size, false);
 		expect(texts(editor)).toEqual(['دوم', 'سه', 'اول']);
 		expect(ids(editor)).toEqual(['bbbbbbbbbbbb', 'cccccccccccc', 'aaaaaaaaaaaa']);
+	});
+
+	it('copy-drag keeps the id on the original and mints one for the copy', () => {
+		const editor = makeEditor(doc(p('اول', 'aaaaaaaaaaaa'), p('دوم', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+		drop(editor, 2, 0, true);
+		expect(texts(editor)).toEqual(['سه', 'اول', 'دوم', 'سه']);
+		const all = ids(editor);
+		expect(all.slice(1)).toEqual(['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc']);
+		expect(all[0]).not.toBe('cccccccccccc');
+		expectValidIds(editor);
 	});
 
 	it('a move done as delete + insert in one transaction keeps the id', () => {
@@ -227,16 +269,23 @@ describe('block ids: I2 operations', () => {
 		expectValidIds(editor);
 	});
 
-	it('copy, delete the original, paste: the copy still gets a new id', () => {
-		const editor = makeEditor(doc(p('اول', 'aaaaaaaaaaaa'), p('دوم', 'bbbbbbbbbbbb')));
-		const html = editor.getHTML();
-		editor.commands.setContent(doc(p('خالی', 'cccccccccccc')));
+	it('cut-paste keeps the id (a move); pasting the same content again mints a new id', () => {
+		const editor = makeEditor(doc(p('اول', 'aaaaaaaaaaaa'), p('دوم', 'bbbbbbbbbbbb'), p('سه', 'cccccccccccc')));
+		const view = editor.view;
+		const sel = NodeSelection.create(editor.state.doc, blockOffset(editor, 1));
+		const html = view.serializeForClipboard(sel.content()).dom.innerHTML;
+		// Cut: remove the block, then paste it at the end.
+		view.dispatch(editor.state.tr.setSelection(sel).deleteSelection());
+		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'cccccccccccc']);
 		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
-		editor.view.pasteHTML(html, new Event('paste') as ClipboardEvent);
-		const all = ids(editor);
-		expect(all).toContain('cccccccccccc');
-		expect(all).not.toContain('aaaaaaaaaaaa');
-		expect(all).not.toContain('bbbbbbbbbbbb');
+		view.pasteHTML(html, new Event('paste') as ClipboardEvent);
+		expect(texts(editor)).toEqual(['اول', 'سه', 'دوم']);
+		expect(ids(editor)).toEqual(['aaaaaaaaaaaa', 'cccccccccccc', 'bbbbbbbbbbbb']);
+		// Second paste of the same clipboard: the id is already in the document, so this is a copy.
+		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+		view.pasteHTML(html, new Event('paste') as ClipboardEvent);
+		expect(texts(editor)).toEqual(['اول', 'سه', 'دوم', 'دوم']);
+		expect(ids(editor).slice(0, 3)).toEqual(['aaaaaaaaaaaa', 'cccccccccccc', 'bbbbbbbbbbbb']);
 		expectValidIds(editor);
 	});
 
