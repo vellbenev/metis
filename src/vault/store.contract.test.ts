@@ -467,6 +467,30 @@ describe.each(backends)('VaultStore contract: $name', ({ emptyDir }) => {
 			]);
 		});
 
+		it('deletes sync, clean and snapshot files; deleting a missing one is a no-op', async () => {
+			const { root, store } = await setup();
+			const { derived } = store;
+			await derived.deleteSync('f1');
+			await derived.deleteClean('f1');
+			await derived.deleteSnapshot('f1', 1);
+			await derived.saveSync('f1', sync(1));
+			await derived.saveClean(clean('f1', 1));
+			await derived.saveSnapshot('f1', 1, { version: 1, clean: null, sync: null });
+			await derived.saveSnapshot('f1', 2, { version: 1, clean: null, sync: null });
+			await derived.deleteSync('f1');
+			await derived.deleteClean('f1');
+			await derived.deleteSnapshot('f1', 1);
+			expect(await derived.loadSync('f1')).toBeUndefined();
+			expect(await derived.loadClean('f1')).toBeUndefined();
+			expect(await derived.listSnapshots('f1')).toEqual([2]);
+			expect([...(await files(root)).keys()].filter(p => p.startsWith('.metis/') && !p.endsWith('/'))).toEqual([
+				'.metis/history/f1/2.json',
+			]);
+			await expect(derived.deleteSync('../notes/x')).rejects.toThrow();
+			await expect(derived.deleteClean('a/b')).rejects.toThrow();
+			await expect(derived.deleteSnapshot('f1', -1)).rejects.toThrow();
+		});
+
 		it('keeps derived data attached to a note across renames (keyed by fileId)', async () => {
 			const { store } = await setup();
 			await store.createFolder([], 'a');
