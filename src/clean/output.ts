@@ -80,7 +80,12 @@ export function parseCleanOutput(content: string, batchIds: BlockId[], enrichmen
 	if (list.length === 0) return { ok: false, error: 'no blocks' };
 	try {
 		const ids = new Set(batchIds);
-		return { ok: true, blocks: list.map(b => parseBlock(b, ids, enrichment)) };
+		const blocks = list.map(b => parseBlock(b, ids, enrichment));
+		// Every raw block of the batch must map to at least one clean block, or its text would vanish.
+		const covered = new Set(blocks.flatMap(b => b.sources));
+		const missing = batchIds.filter(id => !covered.has(id));
+		if (missing.length > 0) throw new Invalid(`no output block has source ${missing.map(id => JSON.stringify(id)).join(', ')}`);
+		return { ok: true, blocks };
 	} catch (e) {
 		if (e instanceof Invalid) return { ok: false, error: e.message };
 		throw e;

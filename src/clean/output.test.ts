@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCleanOutput } from './output';
 
-const ids = ['a', 'b'];
+const ids = ['a'];
 const p = (content: unknown, enrichment: 'off' | 'flag-gaps' | 'light-add' = 'flag-gaps') =>
 	parseCleanOutput(typeof content === 'string' ? content : JSON.stringify(content), ids, enrichment);
 const block = (extra: Record<string, unknown>) => ({ type: 'paragraph', text: 'متن', sources: ['a'], ...extra });
@@ -25,6 +25,12 @@ describe('parseCleanOutput', () => {
 		expect(p({ blocks: [block({ sources: ['zzz'] })] }).ok).toBe(false);
 		expect(p({ blocks: [block({ sources: [] })] }).ok).toBe(false);
 		expect(p({ blocks: [block({ sources: undefined })] }).ok).toBe(false);
+	});
+
+	it('rejects output that leaves a batch block out of every sources list', () => {
+		const twoIds = (content: unknown) => parseCleanOutput(JSON.stringify(content), ['a', 'b'], 'flag-gaps');
+		expect(twoIds({ blocks: [block({})] })).toEqual({ ok: false, error: 'no output block has source "b"' });
+		expect(twoIds({ blocks: [block({ sources: ['a', 'b'] })] }).ok).toBe(true);
 	});
 
 	it('rejects unknown types, bad heading levels and unbalanced tags', () => {

@@ -301,6 +301,51 @@ describe('validation and retry', () => {
 		expect(sentIds(mock)).toEqual(['p1']);
 	});
 
+	describe('a batch block left out of every sources list', () => {
+		/** Cleans only the first block of each batch; the rest are dropped. */
+		const dropAllButFirst = (req: ChatRequest) => {
+			const [b] = payload(req).blocks;
+			return JSON.stringify({ blocks: [{ type: 'paragraph', text: `پاک: ${b.text}`, sources: [b.id] }] });
+		};
+
+		beforeEach(async () => {
+			await write([para('p1', 'یک'), para('p2', 'دو')]);
+			await clean();
+		});
+
+		it('is invalid output: the retry is used when it covers every block', async () => {
+			mock = createMockProvider((req, i) => (i === 0 ? dropAllButFirst(req) : echo(req)));
+			deps = { ...deps, provider: mock };
+			await write([para('p1', 'یک!'), para('p2', 'دو!')]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: true, modelCalls: 2, failed: [] });
+			expect(mock.calls[1].messages[3].content).toContain('p2');
+			const after = await loadClean();
+			expect(cleanFor(after, 'p1')[0].content![0].text).toBe('پاک: یک!');
+			expect(cleanFor(after, 'p2')[0].content![0].text).toBe('پاک: دو!');
+		});
+
+		it('twice: the batch is left untouched and reported, and its sync hashes are not updated', async () => {
+			const cleanBefore = await loadClean();
+			const syncBefore = await loadSync();
+			mock = createMockProvider(dropAllButFirst);
+			deps = { ...deps, provider: mock };
+			await write([para('p1', 'یک!'), para('p2', 'دو!')]);
+			const r = await clean();
+			expect(r).toMatchObject({ changed: false, modelCalls: 2 });
+			expect(r.failed).toEqual([{ blockIds: ['p1', 'p2'], error: expect.stringContaining('"p2"') }]);
+			expect(await loadClean()).toEqual(cleanBefore);
+			expect(await loadSync()).toEqual(syncBefore);
+
+			// Still pending: the next clean sends both blocks again.
+			mock = createMockProvider(echo);
+			deps = { ...deps, provider: mock };
+			await clean();
+			expect(sentIds(mock)).toEqual(['p1', 'p2']);
+			expect(cleanFor(await loadClean(), 'p2')[0].content![0].text).toBe('پاک: دو!');
+		});
+	});
+
 	it('a failed batch of new blocks writes nothing when nothing else changed', async () => {
 		mock = createMockProvider('{"blocks": []}');
 		deps = { ...deps, provider: mock };
