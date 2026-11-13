@@ -1,6 +1,7 @@
 // Incremental clean of one note (SPEC 6.2). Runs only when the user presses Clean.
 // I1: gets a raw-note reader and the derived-data store only; it cannot write raw notes.
-// I3: a raw block whose hash is unchanged causes no model call and its clean block is kept as is.
+// I3: a clean block is regenerated only if at least one of its source raw blocks changed; a raw block
+// whose hash is unchanged and that shares no clean block with a changed block causes no model call.
 
 import { nanoid } from 'nanoid';
 import type { BlockId, JSONNode } from '../core/blocks';
@@ -11,7 +12,7 @@ import type { CleanNote, RewriteLevel, SyncState } from '../vault/types';
 import { affectedIds, diffBlocks, isVerbatimBlock, makeBatches, type Batch, type RawBlock } from './diff';
 import { parseCleanOutput, specToNode, verbatimNode, type CleanBlockSpec } from './output';
 import type { CleanDerivedStore, RawNoteReader } from './ports';
-import { blockText } from './text';
+import { blockText, codeSpans } from './text';
 
 export interface CleanDeps {
 	notes: RawNoteReader;
@@ -86,33 +87,46 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 
 	const diff = await diffBlocks(note.doc, prevSync);
 	const affected = affectedIds(diff, prevSync);
-	const batches = makeBatches(diff.blocks, affected, options.maxBatchBlocks ?? DEFAULT_MAX_BATCH);
+	const batches = makeBatches(diff.blocks, affected, options.maxBatchBlocks ?? DEFAULT_MAX_BATCH, prevSync);
 
 	const entries: SyncState['blocks'] = {};
 	for (const b of diff.blocks) if (prevSync?.blocks[b.id]) entries[b.id] = prevSync.blocks[b.id];
 	const fresh = new Map<BlockId, JSONNode>();
-	const accept = (rawId: BlockId, rawHash: string, nodes: JSONNode[]) => {
+	const accept = (b: RawBlock, nodes: JSONNode[]) => {
 		for (const node of nodes) fresh.set(node.attrs!.id as BlockId, node);
-		entries[rawId] = { rawHash, cleanIds: nodes.map(n => n.attrs!.id as BlockId), lastRevision: revision };
+		entries[b.id] = {
+			rawHash: b.rawHash,
+			rawText: blockText(b.block),
+			cleanIds: nodes.map(n => n.attrs!.id as BlockId),
+			lastRevision: revision,
+		};
 	};
 
 	for (const b of diff.blocks) {
-		if (affected.has(b.id) && isVerbatimBlock(b.block)) accept(b.id, b.rawHash, [verbatimNode(b.block, newId(), b.id, revision)]);
+		if (affected.has(b.id) && isVerbatimBlock(b.block)) accept(b, [verbatimNode(b.block, newId(), b.id, revision)]);
 	}
 
 	let modelCalls = 0;
 	const failed: FailedBatch[] = [];
 	const callModel = async (batch: Batch): Promise<CleanBlockSpec[] | string> => {
 		const ids = batch.blocks.map(b => b.id);
+		const inputCode = batch.blocks.flatMap(b => codeSpans(b.block));
 		const messages = cleanMessages({
 			blocks: batch.blocks.map(b => {
-				const previous = b.kind === 'changed' ? prevSync?.blocks[b.id]?.cleanIds : undefined;
-				const previousClean = previous
-					?.map(id => cleanById.get(id))
+				const previous = b.kind === 'changed' ? prevSync?.blocks[b.id] : undefined;
+				const previousClean = previous?.cleanIds
+					.map(id => cleanById.get(id))
 					.filter((n): n is JSONNode => n !== undefined)
 					.map(blockText)
 					.join('\n');
-				return { id: b.id, text: blockText(b.block), ...(previousClean ? { previousClean } : {}) };
+				// States written before rawText existed have no previous raw text; send the clean text alone.
+				const previousRaw = previousClean ? previous?.rawText : undefined;
+				return {
+					id: b.id,
+					text: blockText(b.block),
+					...(previousRaw ? { previousRaw } : {}),
+					...(previousClean ? { previousClean } : {}),
+				};
 			}),
 			contextBefore: context(diff.blocks, batch.start - 1, -1, options.contextBlocks ?? DEFAULT_CONTEXT, affected, prevSync, cleanById),
 			contextAfter: context(diff.blocks, batch.end + 1, 1, options.contextBlocks ?? DEFAULT_CONTEXT, affected, prevSync, cleanById),
@@ -125,7 +139,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			modelCalls++;
 			// A provider error (network, auth, ...) aborts the whole run; nothing is written.
 			const reply = (await provider.complete({ messages: request, json: true, signal: options.signal })).content;
-			const parsed = parseCleanOutput(reply, ids, options.enrichment);
+			const parsed = parseCleanOutput(reply, ids, options.enrichment, inputCode);
 			if (parsed.ok) return parsed.blocks;
 			error = parsed.error;
 			request = retryMessages(messages, reply, error);
@@ -141,7 +155,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 		}
 		const nodes = result.map(spec => specToNode(spec, newId(), revision));
 		for (const b of batch.blocks) {
-			accept(b.id, b.rawHash, nodes.filter(n => (n.attrs!.sources as BlockId[]).includes(b.id)));
+			accept(b, nodes.filter(n => (n.attrs!.sources as BlockId[]).includes(b.id)));
 		}
 	}
 

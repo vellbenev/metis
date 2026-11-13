@@ -40,6 +40,29 @@ describe('parseCleanOutput', () => {
 		expect(p({ blocks: [block({ text: 'الف <gap><ai>ب</ai></gap>' })] }, 'light-add').ok).toBe(false);
 	});
 
+	it('reads simple Markdown into marks, across <gap> tags, and keeps unmatched * literally', () => {
+		const spans = (text: string, code: string[] = []) => {
+			const r = parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps', code);
+			if (!r.ok) throw new Error(r.error);
+			const b = r.blocks[0];
+			return ('text' in b ? b.text : []).map(s => [s.text, ...(['bold', 'italic', 'code', 'gap'] as const).filter(k => s[k])]);
+		};
+		expect(spans('***الف*** ب')).toEqual([['الف', 'bold', 'italic'], [' ب']]);
+		expect(spans('**الف <gap>ب</gap> ج**')).toEqual([['الف ', 'bold'], ['ب', 'bold', 'gap'], [' ج', 'bold']]);
+		expect(spans('2 * 3 = 6')).toEqual([['2 * 3 = 6']]);
+		expect(spans('a\\*b\\\\c')).toEqual([['a*b\\c']]);
+		expect(spans('کد `` a`b `` و ` x `', ['a`b', 'x'])).toEqual([['کد '], ['a`b', 'code'], [' و '], ['x', 'code']]);
+	});
+
+	it('requires every input code span exactly; invented code spans become plain text', () => {
+		const withCode = (text: string) => parseCleanOutput(JSON.stringify({ blocks: [block({ text })] }), ids, 'flag-gaps', ['f(x)']);
+		expect(withCode('ببین `f(x)`').ok).toBe(true);
+		expect(withCode('ببین `f( x )`')).toEqual({ ok: false, error: 'inline code must be copied exactly: "f(x)"' });
+		expect(withCode('ببین f(x)').ok).toBe(false);
+		const r = withCode('ببین `f(x)` و `g`');
+		expect(r.ok && r.blocks[0].type === 'paragraph' && r.blocks[0].text.map(s => s.code)).toEqual([false, true, false, false]);
+	});
+
 	it('allows <ai> only with light-add, and never a block made only of added text', () => {
 		expect(p({ blocks: [block({ text: 'الف <ai>ب</ai>' })] }, 'off').ok).toBe(false);
 		expect(p({ blocks: [block({ text: 'الف <ai>ب</ai>' })] }, 'light-add').ok).toBe(true);

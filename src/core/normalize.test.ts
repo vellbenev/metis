@@ -19,16 +19,20 @@ describe('normalizePersian (I8)', () => {
 		expect(n('می rust')).toBe('می rust');
 	});
 
-	it('joins common suffixes with ZWNJ', () => {
+	it('joins only the unambiguous suffixes ها, های, هایی, تر, ترین with ZWNJ', () => {
 		expect(n('کتاب ها')).toBe(`کتاب${Z}ها`);
 		expect(n('کتاب های من')).toBe(`کتاب${Z}های من`);
 		expect(n('کتاب هایی که')).toBe(`کتاب${Z}هایی که`);
 		expect(n('بزرگ تر')).toBe(`بزرگ${Z}تر`);
 		expect(n('بزرگ ترین')).toBe(`بزرگ${Z}ترین`);
-		expect(n('خانه ای')).toBe(`خانه${Z}ای`);
-		expect(n('خسته ام')).toBe(`خسته${Z}ام`);
-		expect(n('خانه ات')).toBe(`خانه${Z}ات`);
-		expect(n('خانه اش')).toBe(`خانه${Z}اش`);
+	});
+
+	it('leaves ای, ام, ات, اش separate (they can be words of their own; the prompt handles them)', () => {
+		expect(n('گفت ای خدا')).toBe('گفت ای خدا'); // vocative ای
+		expect(n('خانه ای')).toBe('خانه ای');
+		expect(n('خسته ام')).toBe('خسته ام');
+		expect(n('خانه ات')).toBe('خانه ات');
+		expect(n('خانه اش')).toBe('خانه اش');
 	});
 
 	it('does not join a word that only starts like a suffix', () => {

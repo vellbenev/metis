@@ -1,10 +1,12 @@
 // Validation of the model's clean output (SPEC 6.2 step 5) and conversion to TipTap JSON with
 // provenance marks (I4): every text span is `rewrite` or `aiAdded`; unclear spans also carry `gap`.
+// Inline formatting comes back as simple Markdown (`code`, **bold**, *italic*) and is restored as marks.
 
 import type { BlockId, JSONNode } from '../core/blocks';
 import type { Enrichment } from '../provider/types';
 
-type Inline = { text: string; ai: boolean; gap: boolean }[];
+type Span = { text: string; ai: boolean; gap: boolean; bold: boolean; italic: boolean; code: boolean };
+type Inline = Span[];
 
 export type CleanBlockSpec =
 	| { type: 'paragraph' | 'blockquote'; text: Inline; sources: BlockId[] }
@@ -17,24 +19,83 @@ class Invalid extends Error {}
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Parses inline <gap> and <ai> tags (not nested). */
-function parseInline(value: unknown, enrichment: Enrichment): Inline {
-	if (typeof value !== 'string') throw new Invalid('text must be a string');
+const TAGS = ['<gap>', '</gap>', '<ai>', '</ai>'];
+
+/**
+ * Splits inline text into spans: <gap> and <ai> tags (not nested), and the simple Markdown the
+ * prompt uses (`code`, **bold**, *italic*, backslash escapes). Returns undefined when a bold or
+ * italic marker is left open, so the caller can read every `*` literally instead.
+ */
+function tokenize(value: string, literalStars: boolean): Inline | undefined {
 	const spans: Inline = [];
 	let open: 'gap' | 'ai' | undefined;
-	let last = 0;
-	const push = (text: string) => {
-		if (text) spans.push({ text, ai: open === 'ai', gap: open === 'gap' });
+	let bold = false;
+	let italic = false;
+	let buf = '';
+	const push = (text: string, code = false) => {
+		if (text) spans.push({ text, ai: open === 'ai', gap: open === 'gap', bold, italic, code });
 	};
-	for (const m of value.matchAll(/<(\/?)(gap|ai)>/g)) {
-		push(value.slice(last, m.index));
-		last = m.index! + m[0].length;
-		const [, closing, tag] = m;
-		if (closing ? open !== tag : open !== undefined) throw new Invalid(`unbalanced <${tag}> tag`);
-		open = closing ? undefined : (tag as 'gap' | 'ai');
+	const flush = () => {
+		push(buf);
+		buf = '';
+	};
+	let i = 0;
+	while (i < value.length) {
+		const c = value[i];
+		if (c === '\\' && /[\\`*]/.test(value[i + 1] ?? '')) {
+			buf += value[i + 1];
+			i += 2;
+			continue;
+		}
+		if (c === '`') {
+			const fence = /^`+/.exec(value.slice(i))![0];
+			const close = new RegExp(`(?<!\`)${fence}(?!\`)`, 'g');
+			close.lastIndex = i + fence.length;
+			const m = close.exec(value);
+			if (!m) {
+				buf += fence;
+				i += fence.length;
+				continue;
+			}
+			let code = value.slice(i + fence.length, m.index);
+			if (code.length > 2 && code.startsWith(' ') && code.endsWith(' ') && code.trim()) code = code.slice(1, -1);
+			flush();
+			push(code, true);
+			i = m.index + fence.length;
+			continue;
+		}
+		if (c === '*' && !literalStars) {
+			flush();
+			if (value[i + 1] === '*') {
+				bold = !bold;
+				i += 2;
+			} else {
+				italic = !italic;
+				i += 1;
+			}
+			continue;
+		}
+		const tag = TAGS.find(t => value.startsWith(t, i));
+		if (tag) {
+			flush();
+			const closing = tag[1] === '/';
+			const name = tag.replace(/[<>/]/g, '') as 'gap' | 'ai';
+			if (closing ? open !== name : open !== undefined) throw new Invalid(`unbalanced <${name}> tag`);
+			open = closing ? undefined : name;
+			i += tag.length;
+			continue;
+		}
+		buf += c;
+		i += 1;
 	}
+	flush();
 	if (open) throw new Invalid(`unclosed <${open}> tag`);
-	push(value.slice(last));
+	return bold || italic ? undefined : spans;
+}
+
+function parseInline(value: unknown, enrichment: Enrichment): Inline {
+	if (typeof value !== 'string') throw new Invalid('text must be a string');
+	const spans = tokenize(value, false) ?? tokenize(value, true)!;
 	if (spans.some(s => s.ai) && enrichment !== 'light-add') throw new Invalid('<ai> is not allowed in this mode');
 	if (!spans.some(s => !s.ai && s.text.trim())) throw new Invalid('a block needs text from the notes');
 	return spans;
@@ -67,8 +128,34 @@ function parseBlock(value: unknown, batchIds: Set<BlockId>, enrichment: Enrichme
 	}
 }
 
-/** Validates a model reply: schema, source ids from the batch only, no empty output. */
-export function parseCleanOutput(content: string, batchIds: BlockId[], enrichment: Enrichment): ParseResult {
+const spansOf = (b: CleanBlockSpec): Span[] => ('items' in b ? b.items.flat() : b.text);
+
+/**
+ * Inline code must come back byte-identical. A code span the input did not have is turned into
+ * plain text; an input code span missing from the output (dropped or altered) makes the output invalid.
+ */
+function checkCode(blocks: CleanBlockSpec[], inputCode: string[]): void {
+	const known = new Set(inputCode);
+	const seen = new Set<string>();
+	for (const span of blocks.flatMap(spansOf)) {
+		if (!span.code) continue;
+		if (known.has(span.text)) seen.add(span.text);
+		else span.code = false;
+	}
+	const missing = inputCode.filter(c => !seen.has(c));
+	if (missing.length > 0) throw new Invalid(`inline code must be copied exactly: ${missing.map(c => JSON.stringify(c)).join(', ')}`);
+}
+
+/**
+ * Validates a model reply: schema, source ids from the batch only, no empty output, and every
+ * inline code span of the input (`inputCode`) copied exactly.
+ */
+export function parseCleanOutput(
+	content: string,
+	batchIds: BlockId[],
+	enrichment: Enrichment,
+	inputCode: string[] = [],
+): ParseResult {
 	let data: unknown;
 	try {
 		data = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
@@ -85,6 +172,7 @@ export function parseCleanOutput(content: string, batchIds: BlockId[], enrichmen
 		const covered = new Set(blocks.flatMap(b => b.sources));
 		const missing = batchIds.filter(id => !covered.has(id));
 		if (missing.length > 0) throw new Invalid(`no output block has source ${missing.map(id => JSON.stringify(id)).join(', ')}`);
+		checkCode(blocks, inputCode);
 		return { ok: true, blocks };
 	} catch (e) {
 		if (e instanceof Invalid) return { ok: false, error: e.message };
@@ -99,11 +187,13 @@ export const AI_ADDED = { type: 'aiAdded', attrs: { accepted: false } };
 export const GAP = { type: 'gap' };
 
 function inlineNodes(spans: Inline): JSONNode[] {
-	return spans.map(s => ({
-		type: 'text',
-		text: s.text,
-		marks: s.ai ? [AI_ADDED] : s.gap ? [REWRITE, GAP] : [REWRITE],
-	}));
+	return spans.map(s => {
+		const marks = s.ai ? [AI_ADDED] : s.gap ? [REWRITE, GAP] : [REWRITE];
+		if (s.bold) marks.push({ type: 'bold' });
+		if (s.italic) marks.push({ type: 'italic' });
+		if (s.code) marks.push({ type: 'code' });
+		return { type: 'text', text: s.text, marks };
+	});
 }
 
 const paragraph = (spans: Inline): JSONNode => ({ type: 'paragraph', content: inlineNodes(spans) });
