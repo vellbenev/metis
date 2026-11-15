@@ -10,6 +10,10 @@ export function appSettingsStore(): SettingsStore {
 	return (defaultStore ??= createIdbSettingsStore());
 }
 
+export function setAppSettingsStore(store: SettingsStore): void {
+	defaultStore = store;
+}
+
 /** The app shell's entry point to the provider settings. */
 export function SettingsEntry({ store }: { store?: SettingsStore }) {
 	const [open, setOpen] = useState(false);
