@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JSONNode } from '../core/blocks';
 import { loadFixture, textToDoc } from '../test/fixtures';
-import { latinTerms, missingTerms } from './text';
+import { latinTerms, missingTerms, TERM_STOPLIST } from './text';
 
 const t = (text: string, ...marks: string[]): JSONNode => ({ type: 'text', text, marks: marks.map(type => ({ type })) });
 const p = (...content: JSONNode[]): JSONNode => ({ type: 'paragraph', content });
@@ -29,6 +29,21 @@ describe('latinTerms', () => {
 		const block = p(t('ok این‌ها e.g. و i.e. و etc. و vs و OK و aka و v1.2 و x2 و ZK و Groth16 و MPC و prover'));
 		expect(latinTerms(block)).toEqual(['Groth16', 'MPC', 'prover']);
 		expect(latinTerms(p(t('نسخه v2.0.1 و V3 و e2e و a.b.c')))).toEqual([]);
+	});
+
+	it('never requires common English words, so an English phrase in a note does not demand them', () => {
+		expect(latinTerms(p(t('عبارت The proof of knowledge and the verifier for this protocol')))).toEqual([
+			'proof',
+			'knowledge',
+			'verifier',
+			'protocol',
+		]);
+		expect(latinTerms(p(t('With THE AND')))).toEqual([]);
+	});
+
+	it('lists only stoplist words a term could be (3 or more characters)', () => {
+		for (const word of TERM_STOPLIST) expect(word.length).toBeGreaterThanOrEqual(3);
+		expect(TERM_STOPLIST.has('the')).toBe(true);
 	});
 
 	it('drops case-insensitive repeats and keeps the first spelling', () => {

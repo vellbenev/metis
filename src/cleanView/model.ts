@@ -2,6 +2,7 @@
 // `gap` collection and the one-click `aiAdded` accept/remove transforms.
 // Everything here works on the derived CleanNote only; the raw note is never an input (I1).
 
+import { gapReason, type GapReason } from '../clean/output';
 import type { BlockId, JSONNode } from '../core/blocks';
 import type { CleanNote } from '../vault/types';
 
@@ -52,19 +53,26 @@ export function linkedBlocks(map: LinkMap, selected: BlockRef | undefined): { ra
 
 // ---- change highlights -------------------------------------------------------------------------
 
-/** Clean blocks new or changed in the last clean: `changedIn === revision` (SPEC 9). */
+/**
+ * The revision of the last clean. Accept/remove of an `aiAdded` span takes a new revision but is not
+ * a clean, so it leaves this alone. Twins written before `lastClean` existed use their revision.
+ */
+export const lastCleanOf = (clean: CleanNote) => clean.lastClean ?? clean.revision;
+
+/** Clean blocks new or changed in the last clean: `changedIn` is that clean's revision (SPEC 9). */
 export function changedBlocks(clean: CleanNote | undefined): BlockId[] {
 	if (!clean) return [];
+	const last = lastCleanOf(clean);
 	return blocksOf(clean)
-		.filter(b => b.attrs?.changedIn === clean.revision)
+		.filter(b => b.attrs?.changedIn === last)
 		.map(idOf);
 }
 
 /**
- * Highlights are dismissed per revision, as UI state only: the key names the clean it belongs
- * to, so a new clean (new revision) or another note shows its own highlights again.
+ * Highlights are dismissed per clean, as UI state only: the key names the clean they belong to, so
+ * a new clean or another note shows its own highlights again, and accept/remove keeps them dismissed.
  */
-export const highlightKey = (clean: CleanNote) => `${clean.fileId}:${clean.revision}`;
+export const highlightKey = (clean: CleanNote) => `${clean.fileId}:${lastCleanOf(clean)}`;
 
 export function visibleHighlights(clean: CleanNote | undefined, dismissed: ReadonlySet<string>): BlockId[] {
 	if (!clean || dismissed.has(highlightKey(clean))) return [];
@@ -110,16 +118,31 @@ const runText = (run: JSONNode[]) => run.map(n => n.text).join('');
 
 export interface GapItem {
 	blockId: BlockId;
-	/** Index of the run among the block's `gap` runs. */
+	/** Index of the span among the block's `gap` spans. */
 	index: number;
 	text: string;
+	/** `unclear` in the notes, or `term-missing` (a Latin term the clean lost). */
+	reason: GapReason;
 }
 
-/** Every `gap` span of the clean twin, in document order, with the clean block it sits in. */
+const reasonOf = (node: JSONNode) => gapReason(node.marks!.find(m => m.type === 'gap')!);
+
+/**
+ * Every `gap` span of the clean twin, in document order, with the clean block it sits in and its
+ * reason. A run of adjacent gap text is one span per reason.
+ */
 export function collectGaps(clean: CleanNote | undefined): GapItem[] {
-	return blocksOf(clean).flatMap(block =>
-		runsIn(block, 'gap').map((run, index) => ({ blockId: idOf(block), index, text: runText(run) })),
-	);
+	return blocksOf(clean).flatMap(block => {
+		const spans: JSONNode[][] = [];
+		for (const run of runsIn(block, 'gap')) {
+			let span: JSONNode[] | undefined;
+			for (const node of run) {
+				if (span && reasonOf(span[0]) === reasonOf(node)) span.push(node);
+				else spans.push((span = [node]));
+			}
+		}
+		return spans.map((span, index) => ({ blockId: idOf(block), index, text: runText(span), reason: reasonOf(span[0]) }));
+	});
 }
 
 // ---- aiAdded accept / remove -------------------------------------------------------------------
@@ -144,6 +167,25 @@ export function aiSpans(clean: CleanNote | undefined): AiSpan[] {
 	);
 }
 
+const withText = (node: JSONNode, text: string): JSONNode[] => (text ? [{ ...node, text }] : []);
+
+/**
+ * After a run was removed, the text before it (`content[at - 1]`) and after it (`content[at]`) meet.
+ * Drops the space left behind: removing ` <ai>x</ai> ` leaves one space, not two, and no space is
+ * left before punctuation or at either edge of the paragraph.
+ */
+function tidyJoint(content: JSONNode[], at: number): void {
+	const before = content[at - 1];
+	const after = content[at];
+	const prev = before && isText(before) ? before.text! : undefined;
+	const next = after && isText(after) ? after.text! : undefined;
+	if (prev !== undefined && /\s$/.test(prev) && (after === undefined || (next !== undefined && /^[\s.,;:!?،؛؟)»]/.test(next)))) {
+		content.splice(at - 1, 1, ...withText(before, prev.replace(/\s+$/, '')));
+	} else if (before === undefined && next !== undefined && /^\s/.test(next)) {
+		content.splice(at, 1, ...withText(after, next.replace(/^\s+/, '')));
+	}
+}
+
 /**
  * Rewrites the `index`-th `aiAdded` run of one block. Only that block's inline content changes:
  * the block id, `sources`, `changedIn`, every other block and the revision stay as they are.
@@ -162,13 +204,17 @@ function editRun(
 	const visit = (node: JSONNode): JSONNode => {
 		if (!node.content) return node;
 		const content: JSONNode[] = [];
+		let joint: number | undefined;
 		for (const s of segments(node.content, 'aiAdded')) {
 			if ('node' in s) content.push(done ? s.node : visit(s.node));
 			else if (!done && seen++ === index) {
-				content.push(...edit(s.run));
+				const replaced = edit(s.run);
+				content.push(...replaced);
+				if (replaced.length === 0) joint = content.length;
 				done = true;
 			} else content.push(...s.run);
 		}
+		if (joint !== undefined) tidyJoint(content, joint);
 		return { ...node, content };
 	};
 	const block = visit(blocksOf(clean)[at]);
@@ -188,7 +234,7 @@ export function acceptAiAdded(clean: CleanNote, blockId: BlockId, index: number)
 	);
 }
 
-/** One-click remove: deletes the run's text from the clean twin. */
+/** One-click remove: deletes the run's text from the clean twin, and the space it leaves behind. */
 export function removeAiAdded(clean: CleanNote, blockId: BlockId, index: number): CleanNote | undefined {
 	return editRun(clean, blockId, index, () => []);
 }

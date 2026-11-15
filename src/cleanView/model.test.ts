@@ -114,14 +114,25 @@ describe('change highlights', () => {
 		expect(visibleHighlights(next, dismissed)).toEqual(['c9']);
 		expect(visibleHighlights({ ...n, fileId: 'f2' }, dismissed)).toEqual(['c2', 'c3']);
 	});
+
+	it('follows the last clean, not the revision: accept/remove (a new revision) keeps highlights and dismissal', () => {
+		const cleaned = { ...note(), lastClean: 3 };
+		const accepted = { ...acceptAiAdded(cleaned, 'c2', 0)!, revision: 4 };
+		expect(changedBlocks(accepted)).toEqual(['c2', 'c3']);
+		expect(highlightKey(accepted)).toBe(highlightKey(cleaned));
+		expect(visibleHighlights(accepted, new Set([highlightKey(cleaned)]))).toEqual([]);
+		// The next clean sets lastClean to its own revision and highlights its own blocks.
+		const next = { ...accepted, revision: 5, lastClean: 5, doc: { type: 'doc', content: [block('c9', ['r9'], 5, [t('نو', REWRITE)])] } };
+		expect(visibleHighlights(next, new Set([highlightKey(cleaned)]))).toEqual(['c9']);
+	});
 });
 
 describe('gap list', () => {
 	it('collects every gap span in document order with its block, nested lists included', () => {
 		expect(collectGaps(note())).toEqual([
-			{ blockId: 'c2', index: 0, text: 'چیزی' },
-			{ blockId: 'c3', index: 0, text: 'نامعلوم' },
-			{ blockId: 'c4', index: 0, text: 'چهار' },
+			{ blockId: 'c2', index: 0, text: 'چیزی', reason: 'unclear' },
+			{ blockId: 'c3', index: 0, text: 'نامعلوم', reason: 'unclear' },
+			{ blockId: 'c4', index: 0, text: 'چهار', reason: 'unclear' },
 		]);
 		expect(collectGaps(undefined)).toEqual([]);
 	});
@@ -131,7 +142,23 @@ describe('gap list', () => {
 		n.doc.content = [
 			block('c1', ['r1'], 1, [t('الف', REWRITE, GAP), t('ب', REWRITE, GAP, { type: 'bold' }), t(' ج', REWRITE)]),
 		];
-		expect(collectGaps(n)).toEqual([{ blockId: 'c1', index: 0, text: 'الفب' }]);
+		expect(collectGaps(n)).toEqual([{ blockId: 'c1', index: 0, text: 'الفب', reason: 'unclear' }]);
+	});
+
+	it('reads the gap reason; a gap mark without one is unclear; adjacent gaps of two reasons are two spans', () => {
+		const MISSING = { type: 'gap', attrs: { reason: 'term-missing' } };
+		const UNCLEAR = { type: 'gap', attrs: { reason: 'unclear' } };
+		const n = note();
+		n.doc.content = [
+			block('c1', ['r1'], 1, [t('الف', REWRITE, MISSING), t('ب', REWRITE, MISSING), t('ج', REWRITE, GAP), t('د', REWRITE, UNCLEAR)]),
+			block('c2', ['r2'], 1, [t('ه', REWRITE, MISSING), t(' و ', REWRITE), t('ی', REWRITE, MISSING)]),
+		];
+		expect(collectGaps(n)).toEqual([
+			{ blockId: 'c1', index: 0, text: 'الفب', reason: 'term-missing' },
+			{ blockId: 'c1', index: 1, text: 'جد', reason: 'unclear' },
+			{ blockId: 'c2', index: 0, text: 'ه', reason: 'term-missing' },
+			{ blockId: 'c2', index: 1, text: 'ی', reason: 'term-missing' },
+		]);
 	});
 });
 
@@ -164,10 +191,22 @@ describe('aiAdded runs', () => {
 	it('remove deletes only that span text', () => {
 		const before = note();
 		const after = removeAiAdded(before, 'c2', 0)!;
-		expect(after.doc.content![1].content!.map(n => n.text).join('')).toBe('اثبات  و سریع است ولی چیزی.');
+		expect(after.doc.content![1].content!.map(n => n.text).join('')).toBe('اثبات و سریع است ولی چیزی.');
 		const nested = removeAiAdded(before, 'c4', 0)!;
-		expect(nested.doc.content![3].content![0].content![0].content!.map(n => n.text)).toEqual(['یک ']);
+		expect(nested.doc.content![3].content![0].content![0].content!.map(n => n.text)).toEqual(['یک']);
 		expect(nested.doc.content![3].content![1]).toEqual(before.doc.content![3].content![1]);
+	});
+
+	it('remove leaves no double space, no space before punctuation and none at the edges', () => {
+		const one = (content: JSONNode[]) => ({ ...note(), doc: { type: 'doc', content: [block('c1', ['r1'], 3, content)] } });
+		const text = (n: CleanNote | undefined) => n!.doc.content![0].content!.map(x => x.text).join('');
+		expect(removeAiAdded(note(), 'c2', 1)!.doc.content![1].content!.map(x => x.text).join('')).toBe('اثبات کوتاه و ولی چیزی.');
+		expect(text(removeAiAdded(one([t('الف ', REWRITE), t('ب', AI), t('.', REWRITE)]), 'c1', 0))).toBe('الف.');
+		expect(text(removeAiAdded(one([t('ب', AI), t(' الف', REWRITE)]), 'c1', 0))).toBe('الف');
+		expect(text(removeAiAdded(one([t('الف', REWRITE), t('ب', AI), t('ج', REWRITE)]), 'c1', 0))).toBe('الفج');
+		// The space-only node left over is dropped, and the bold mark on the text after is kept.
+		const bold = removeAiAdded(one([t('الف', REWRITE), t(' ', REWRITE), t('ب', AI), t(' ج', REWRITE, { type: 'bold' })]), 'c1', 0)!;
+		expect(bold.doc.content![0].content).toEqual([t('الف', REWRITE), t(' ج', REWRITE, { type: 'bold' })]);
 	});
 
 	it('accept and remove keep ids, sources, changedIn, revision and every other block byte-identical', () => {

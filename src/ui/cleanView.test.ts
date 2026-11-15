@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runClean, type CleanDeps } from '../clean/clean';
 import type { CleanDerivedStore } from '../clean/ports';
-import { aiSpans, collectGaps } from '../cleanView/model';
+import { aiSpans, changedBlocks, collectGaps, highlightKey } from '../cleanView/model';
 import { canonicalHash, type JSONNode } from '../core/blocks';
 import { createMockProvider, type MockProvider } from '../provider/mock';
 import type { ChatRequest } from '../provider/types';
@@ -122,6 +122,26 @@ describe('aiAdded accept / remove on the stored clean twin', () => {
 		const after = (await reopened.derived.loadClean(fileId))!;
 		expect(aiSpans(after).map(s => s.blockId)).toEqual([spans[1].blockId, spans[2].blockId]);
 		expect(after.revision).toBe(2);
+	});
+
+	it('accept and remove keep the last clean, so its highlights stay until the next clean (SPEC 9)', async () => {
+		const cleaned = await current();
+		expect(cleaned.lastClean).toBe(1);
+		const highlighted = changedBlocks(cleaned);
+		expect(highlighted).toHaveLength(3);
+		const spans = aiSpans(cleaned);
+		expect(await acceptAi(derived, fileId, 1, spans[0].blockId, 0)).toBe(true);
+		expect(await removeAi(derived, fileId, 2, spans[1].blockId, 0)).toBe(true);
+		const after = await current();
+		expect(after).toMatchObject({ revision: 3, lastClean: 1 });
+		expect(changedBlocks(after)).toEqual(highlighted);
+		expect(highlightKey(after)).toBe(highlightKey(cleaned));
+
+		await write(day2());
+		await clean();
+		const next = await current();
+		expect(next).toMatchObject({ revision: 4, lastClean: 4 });
+		expect(changedBlocks(next)).toHaveLength(day2().length - day1().length);
 	});
 
 	it('an unknown span or a twin that moved on since it was shown changes nothing', async () => {

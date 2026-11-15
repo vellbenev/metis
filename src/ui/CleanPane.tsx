@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { gapReason, type GapReason } from '../clean/output';
 import type { CleanDerivedStore } from '../clean/ports';
 import {
 	collectGaps,
@@ -12,6 +13,12 @@ import {
 import type { BlockId, JSONNode } from '../core/blocks';
 import { acceptAi, loadCleanView, removeAi, undoLastClean, type CleanViewState } from './cleanView';
 
+/** The gap list shows the two kinds of gap separately (SPEC 9). */
+const GAP_KINDS: { reason: GapReason; title: string }[] = [
+	{ reason: 'unclear', title: 'جاهای نامشخص' },
+	{ reason: 'term-missing', title: 'جاهایی که واژه‌ی لاتینی از آن افتاد' },
+];
+
 const has = (node: JSONNode, type: string) => node.marks?.some(m => m.type === type) ?? false;
 const accepted = (node: JSONNode) => node.marks?.find(m => m.type === 'aiAdded')?.attrs?.accepted === true;
 
@@ -20,7 +27,8 @@ function renderText(node: JSONNode, key: number): ReactNode {
 	if (has(node, 'code')) out = <code>{out}</code>;
 	if (has(node, 'italic')) out = <em>{out}</em>;
 	if (has(node, 'bold')) out = <strong>{out}</strong>;
-	if (has(node, 'gap')) out = <span className='gap'>{out}</span>;
+	const gap = node.marks?.find(m => m.type === 'gap');
+	if (gap) out = <span className='gap' data-gap-reason={gapReason(gap)}>{out}</span>;
 	return <Fragment key={key}>{out}</Fragment>;
 }
 
@@ -273,20 +281,24 @@ export function CleanPane({
 					});
 				})}
 			</article>
-			{gaps.length > 0 && (
-				<section className='clean-gaps'>
-					<h2>جاهای نامشخص</h2>
-					<ul>
-						{gaps.map(g => (
-							<li key={`${g.blockId}:${g.index}`}>
-								<button type='button' onClick={() => onSelect({ side: 'clean', id: g.blockId })}>
-									{g.text}
-								</button>
-							</li>
-						))}
-					</ul>
-				</section>
-			)}
+			{GAP_KINDS.map(({ reason, title }) => {
+				const list = gaps.filter(g => g.reason === reason);
+				if (list.length === 0) return null;
+				return (
+					<section key={reason} className='clean-gaps' data-gap-reason={reason}>
+						<h2>{title}</h2>
+						<ul>
+							{list.map(g => (
+								<li key={`${g.blockId}:${g.index}`}>
+									<button type='button' onClick={() => onSelect({ side: 'clean', id: g.blockId })}>
+										{g.text}
+									</button>
+								</li>
+							))}
+						</ul>
+					</section>
+				);
+			})}
 		</aside>
 	);
 }

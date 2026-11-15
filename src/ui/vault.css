@@ -143,9 +143,20 @@
 	cursor: progress;
 }
 
-.clean-status {
+.clean-bar {
+	flex-wrap: wrap;
+}
+
+.clean-status,
+.clean-terms,
+.clean-failed {
 	font-size: 0.85rem;
 	color: var(--ink-soft);
+}
+
+.clean-failed {
+	margin: 0;
+	padding-inline-start: 1.2rem;
 }
 
 .textbook-control {
