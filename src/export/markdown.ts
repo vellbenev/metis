@@ -4,13 +4,22 @@
 import { MarkdownManager } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import type { JSONNode } from '../core/blocks';
+import { escapeInline } from './escape';
 import type { CleanNote, RawNote, Textbook, TextbookOutline } from '../vault/types';
 
 export const AI_OPEN = '<!-- ai-added -->';
 export const AI_CLOSE = '<!-- /ai-added -->';
 
 let manager: MarkdownManager | undefined;
-const markdown = () => (manager ??= new MarkdownManager({ extensions: [StarterKit] }));
+function markdown(): MarkdownManager {
+	if (!manager) {
+		manager = new MarkdownManager({ extensions: [StarterKit] });
+		// The built-in encoder backslash-escapes every `* _ [ ] ~ \` and turns `& < >` into entities, which changes
+		// ordinary text. Text arrives here already escaped where needed (escape.ts), so it is passed through as is.
+		(manager as unknown as { encodeTextForMarkdown(text: string): string }).encodeTextForMarkdown = text => text;
+	}
+	return manager;
+}
 
 const unaccepted = (n: JSONNode) =>
 	typeof n.text === 'string' && (n.marks ?? []).some(m => m.type === 'aiAdded' && m.attrs?.accepted !== true);
@@ -40,7 +49,8 @@ function prepare(node: JSONNode, open: string, close: string): JSONNode {
 		else delete out.marks;
 	}
 	if (node.content) {
-		const kids = node.content;
+		const kids =
+			node.type === 'paragraph' || node.type === 'heading' ? escapeInline(node.content, node.type) : node.content;
 		out.content = kids.flatMap((kid, i) => {
 			const ai = unaccepted(kid);
 			const before = ai && !(i > 0 && unaccepted(kids[i - 1]));
@@ -83,7 +93,7 @@ export function textbookToMarkdown(outline: TextbookOutline | undefined, textboo
 			type: 'bulletList',
 			content: gaps.map(g => ({
 				type: 'listItem',
-				content: [{ type: 'paragraph', content: [{ type: 'text', text: `${title(g.sectionId)}: ${g.note}` }] }],
+				content: [{ type: 'paragraph', content: [{ type: 'text', text: title(g.sectionId) ? `${title(g.sectionId)}: ${g.note}` : g.note }] }],
 			})),
 		});
 	}

@@ -204,6 +204,11 @@ describe('textbook export', () => {
 		);
 	});
 
+	it('a gap whose section is unknown is listed without a dangling title', () => {
+		const tb = { ...textbook, gaps: [{ sectionId: 'gone', note: 'prover مبهم' }] };
+		expect(textbookToMarkdown(outline, tb)).toContain('\n\n- prover مبهم\n');
+	});
+
 	it('nothing to export without an outline', async () => {
 		const empty = { loadOutline: async () => undefined, loadTextbook: async () => undefined };
 		expect(await exportTextbook(empty, 'ZKP')).toBeUndefined();
