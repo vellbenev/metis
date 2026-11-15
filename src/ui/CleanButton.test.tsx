@@ -91,4 +91,36 @@ describe('Clean button', () => {
 		expect(status()).toContain('boom');
 		expect(button().disabled).toBe(false);
 	});
+
+	it('shows why each failed batch was left untouched', async () => {
+		const error = 'no blocks (the first reply missed Latin terms: prover)';
+		const run = vi.fn().mockResolvedValue({ changed: false, revision: 0, modelCalls: 2, failed: [{ blockIds: ['p1'], error }], unresolvedTerms: [] });
+		await act(async () => root.render(<CleanButton run={run} />));
+		await press();
+		expect(container.querySelector('.clean-failed bdi')?.textContent).toBe(error);
+		expect(container.querySelector('.clean-failed bdi')?.getAttribute('dir')).toBe('ltr');
+	});
+
+	it('shows one quiet line with the Latin terms the clean could not keep, without repeats', async () => {
+		const run = vi
+			.fn()
+			.mockResolvedValueOnce({
+				changed: true,
+				revision: 1,
+				modelCalls: 2,
+				failed: [],
+				unresolvedTerms: [
+					{ blockId: 'p1', terms: ['prover', 'zk-SNARK'] },
+					{ blockId: 'p2', terms: ['Prover'] },
+				],
+			})
+			.mockResolvedValueOnce({ changed: false, revision: 1, modelCalls: 0, failed: [], unresolvedTerms: [] });
+		await act(async () => root.render(<CleanButton run={run} />));
+		await press();
+		const line = container.querySelectorAll('.clean-terms');
+		expect(line).toHaveLength(1);
+		expect([...line[0].querySelectorAll('bdi')].map(b => b.textContent)).toEqual(['prover', 'zk-SNARK']);
+		await press();
+		expect(container.querySelector('.clean-terms')).toBeNull();
+	});
 });

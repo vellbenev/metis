@@ -6,7 +6,10 @@ import type { BlockId, JSONNode } from '../core/blocks';
 import type { Enrichment } from '../provider/types';
 import { missingTerms } from './text';
 
-type Span = { text: string; ai: boolean; gap: boolean; bold: boolean; italic: boolean; code: boolean };
+/** Why a span is a gap: unclear in the notes (the model's <gap>), or a Latin term the output lost. */
+export type GapReason = 'unclear' | 'term-missing';
+
+type Span = { text: string; ai: boolean; gap: GapReason | false; bold: boolean; italic: boolean; code: boolean };
 type Inline = Span[];
 
 export type CleanBlockSpec =
@@ -43,7 +46,7 @@ function tokenize(value: string, literal: Set<number>, markers: StarMarker[] = [
 	let italic = false;
 	let buf = '';
 	const push = (text: string, code = false) => {
-		if (text) spans.push({ text, ai: open === 'ai', gap: open === 'gap', bold, italic, code });
+		if (text) spans.push({ text, ai: open === 'ai', gap: open === 'gap' && 'unclear', bold, italic, code });
 	};
 	const flush = () => {
 		push(buf);
@@ -181,7 +184,7 @@ function checkCode(blocks: CleanBlockSpec[], inputCode: string[]): void {
 
 /** The Latin terms of the batch input that are not in the output (SPEC 6.4); see `missingTerms`. */
 function checkTerms(blocks: CleanBlockSpec[], inputTerms: string[]): string[] {
-	const text = blocks.map(b => ('items' in b ? b.items : [b.text]).map(i => i.map(s => s.text).join('')).join('\n')).join('\n');
+	const text = blocks.map(specText).join('\n');
 	return missingTerms(text, inputTerms);
 }
 
@@ -225,11 +228,16 @@ export function parseCleanOutput(
 
 export const REWRITE = { type: 'rewrite' };
 export const AI_ADDED = { type: 'aiAdded', attrs: { accepted: false } };
-export const GAP = { type: 'gap' };
+/** A `gap` mark. `reason` is optional on disk: a gap mark without one reads as `unclear`. */
+export const gapMark = (reason: GapReason) => ({ type: 'gap', attrs: { reason } });
+
+/** The reason of a `gap` mark; old data without one is `unclear`. */
+export const gapReason = (mark: { attrs?: Record<string, unknown> }): GapReason =>
+	mark.attrs?.reason === 'term-missing' ? 'term-missing' : 'unclear';
 
 function inlineNodes(spans: Inline): JSONNode[] {
 	return spans.map(s => {
-		const marks = s.ai ? [AI_ADDED] : s.gap ? [REWRITE, GAP] : [REWRITE];
+		const marks: NonNullable<JSONNode['marks']> = s.ai ? [AI_ADDED] : s.gap ? [REWRITE, gapMark(s.gap)] : [REWRITE];
 		if (s.bold) marks.push({ type: 'bold' });
 		if (s.italic) marks.push({ type: 'italic' });
 		if (s.code) marks.push({ type: 'code' });
@@ -260,12 +268,19 @@ export function specToNode(spec: CleanBlockSpec, id: BlockId, changedIn: number)
 }
 
 /**
- * Marks every non-added span of a clean block `gap`: used when a Latin term of its sources is still
- * missing after the retry, so the block shows it is unresolved.
+ * Marks the text of one clean block as a `term-missing` gap: used when a Latin term of its sources is
+ * still missing after the retry. Added text, inline code (checked byte for byte, so never the lost
+ * term) and spans already marked unclear keep their own marks; a block of code only is marked in full.
  */
 export function markGap(spec: CleanBlockSpec): void {
-	for (const span of spansOf(spec)) if (!span.ai) span.gap = true;
+	const spans = spansOf(spec).filter(s => !s.ai && !s.gap);
+	const text = spans.filter(s => !s.code);
+	for (const span of text.length > 0 ? text : spans) span.gap = 'term-missing';
 }
+
+/** The plain text of a clean block spec, items joined by newlines. */
+export const specText = (spec: CleanBlockSpec): string =>
+	('items' in spec ? spec.items : [spec.text]).map(i => i.map(s => s.text).join('')).join('\n');
 
 /**
  * A verbatim copy of a raw block (code, horizontal rule, ...) as a clean block. Its text is marked

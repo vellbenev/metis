@@ -21,6 +21,9 @@ describe('clean prompt', () => {
 	it('lists the batch Latin terms only when there are some, and says each must be kept', () => {
 		const base: CleanPromptInput = { blocks: [{ id: 'a', text: 'prover' }], contextBefore: [], contextAfter: [], rewriteLevel: 'structure', enrichment: 'flag-gaps' };
 		expect(prompt).toContain('Every term listed in "latinTerms" must appear in your output');
+		// A missing term is retried, then accepted with a gap mark: the prompt must not say it is rejected.
+		expect(prompt).not.toContain('rejected');
+		expect(prompt).toContain('marked as a gap');
 		expect(JSON.parse(cleanMessages({ ...base, latinTerms: ['prover'] })[1].content).latinTerms).toEqual(['prover']);
 		expect(JSON.parse(cleanMessages({ ...base, latinTerms: [] })[1].content)).not.toHaveProperty('latinTerms');
 	});

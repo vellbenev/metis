@@ -37,7 +37,8 @@ function inline(nodes: JSONNode[] | undefined): string {
 		else if (typeof node.text === 'string') {
 			format(hasMark(node, 'bold'), hasMark(node, 'italic'));
 			let text = hasMark(node, 'code') ? codeSpan(node.text) : escape(node.text);
-			if (hasMark(node, 'gap')) text = `<gap>${text}</gap>`;
+			// A `term-missing` gap is not unclear in the notes, so it is not shown to the model as one.
+			if (node.marks?.some(m => m.type === 'gap' && m.attrs?.reason !== 'term-missing')) text = `<gap>${text}</gap>`;
 			if (hasMark(node, 'aiAdded')) text = `<ai>${text}</ai>`;
 			out += text;
 		} else {
@@ -95,8 +96,24 @@ function termText(node: JSONNode): string {
 	return children.map(termText).join(inlineOnly ? '' : '\n');
 }
 
-/** Common words and abbreviations that are not technical terms (compared lowercase, dots removed). */
-export const TERM_STOPLIST: ReadonlySet<string> = new Set(['ok', 'okay', 'eg', 'ie', 'etc', 'vs', 'aka', 'btw', 'fyi', 'cf', 'via', 'et', 'al']);
+/**
+ * Common English words and abbreviations that are never technical terms (compared lowercase). Only
+ * words of 3 or more characters are listed: shorter tokens are never terms anyway.
+ */
+export const TERM_STOPLIST: ReadonlySet<string> = new Set(
+	[
+		// abbreviations
+		'okay etc aka btw fyi via',
+		// English function words, so an English phrase in a note does not turn them into required terms
+		'the and for nor but yet not are was were has have had does did been being its his her him she',
+		'they them their our you your this that these those then than with from into onto over under',
+		'about also any all can could will would shall should may might must who whom whose which what',
+		'when where why how there here very just only more most some such each both either neither per',
+		'out off upon while because',
+	]
+		.join(' ')
+		.split(' '),
+);
 
 /**
  * Whether a matched Latin word counts as a technical term: at least 3 characters, two Latin letters in a
@@ -105,7 +122,7 @@ export const TERM_STOPLIST: ReadonlySet<string> = new Set(['ok', 'okay', 'eg', '
 function isTerm(word: string): boolean {
 	if (word.length < 3) return false;
 	if (!new RegExp(`[${LATIN}]{2}`, 'u').test(word)) return false;
-	return !TERM_STOPLIST.has(word.toLowerCase().replace(/\./g, ''));
+	return !TERM_STOPLIST.has(word.toLowerCase());
 }
 
 /**

@@ -108,9 +108,11 @@ interface CleanNote {
 	version: 1;
 	fileId: string;
 	revision: number;
+	lastClean?: number; // revision of the last clean; accept/remove leave it (absent in old data: read as `revision`)
 	doc: TipTapJSON; // top-level nodes: attrs.id, attrs.sources: BlockId[], attrs.changedIn: number
 }
-// inline marks in derived docs: `rewrite` (default), `aiAdded` {accepted: boolean}, `gap` (unclear in the notes)
+// inline marks in derived docs: `rewrite` (default), `aiAdded` {accepted: boolean},
+// `gap` {reason?: 'unclear' | 'term-missing'} (unclear in the notes, or a Latin term the clean lost; no reason = unclear)
 
 interface TextbookOutline {
 	version: 1;
@@ -170,15 +172,17 @@ Storage rules:
 4. Call the `clean` provider profile with the vault's default rewrite level (no per-file override yet). Inline code,
    bold and italic are sent as simple Markdown (`` `code` ``, `**bold**`, `*italic*`) and restored as marks. Expected
    output: `{"blocks": [...]}` (a bare array is also accepted) of clean blocks, each with `sources: BlockId[]` (ids
-   from the batch only).
+   from the batch only). A `gap` from the model has reason `unclear`.
 5. Validate (schema, source ids exist, every batch block is a source of some output block, no empty output, every
    input inline code span copied byte-identical, every Latin term of the batch kept (6.4); an invented code span becomes
    plain text; a `*` or `**` with no partner is read as text, the other markers still format). Retry once on invalid
    output; on second failure leave that batch untouched and report it. A missing Latin term also gets one retry, but
-   if the retry is otherwise valid and still misses a term it is accepted: every clean block whose sources include a
-   raw block with that term gets a `gap` mark on all its text (except `aiAdded` spans), and the run reports the raw
-   block and its missing terms (`unresolvedTerms`). A provider error (network, auth, ...) aborts the whole run and
-   writes nothing.
+   if the retry is otherwise valid and still misses a term it is accepted: only the clean block that lost the term gets
+   a `gap` mark with reason `term-missing` on its text (not on `aiAdded` spans, inline code or spans already marked
+   unclear). When a raw block became several clean blocks, that block is estimated from the term's relative position
+   in the raw text. The run reports the raw block and its missing terms (`unresolvedTerms`). If the first reply only
+   missed a term and the retry fails another check, the batch is still left untouched; the reported reason names both.
+   A provider error (network, auth, ...) aborts the whole run and writes nothing.
 6. Splice into the CleanNote: unchanged blocks are untouched; changed blocks are replaced; deleted raw blocks remove
    their clean blocks; a block that was only moved (same id, same hash, new position) causes no model call and its clean
    block is just reordered; final order follows raw order.
@@ -202,10 +206,12 @@ Storage rules:
 - Semi-formal Persian; convert colloquial speech to clean written Persian without losing meaning.
 - Keep Latin technical terms in Latin (`zk-SNARK`, `prover`); do not translate them. Enforced in code: the batch's
   Latin terms are listed in the request (`latinTerms`), and an output missing one is retried, then accepted with a
-  `gap` mark (6.2 step 5). A term is a run of Latin letters and digits that starts with a letter, with inner `-`, `_`
+  `term-missing` `gap` mark (6.2 step 5). A term is a run of Latin letters and digits that starts with a letter, with inner `-`, `_`
   or `.` joining parts (`zk-SNARK`, `Node.js`, `ERC-20`). Not terms: inline code, URLs, e-mail addresses, tokens
   shorter than 3 characters (`x`, `ok`, `vs`, `ZK`), tokens without two Latin letters in a row (`v1.2`, `e.g`, `x2`),
-  and the stoplist `ok okay eg ie etc vs aka btw fyi cf via et al` (case and dots ignored). In the output a term must
+  and a stoplist (case ignored, every entry 3 or more characters) of abbreviations (`okay etc aka btw fyi via`) and
+  common English function words (`the`, `and`, `for`, `with`, `this`, ...), so an English phrase in a note does not
+  make them required. In the output a term must
   occur as a whole Latin word; case, formatting, hyphen variants (`‑`, `–`) and a Persian suffix (`prover‌ها`) are
   accepted. Singular and regular English plural (`-s`, `-es`, `-ies`) count as the same term both ways: input
   `provers` is kept by `prover‌ها` or `prover`, input `prover` by `provers`.
@@ -263,8 +269,15 @@ interface ProviderSettings {
 - Layout: slim file tree, editor, optional parallel clean-twin pane. Clicking a block in one pane highlights its
   counterpart in the other (via `sources`).
 - One prominent button per file: **Clean**. Vault level: a quieter **Textbook** control with the stale-file count.
-- New/changed blocks (`changedIn === revision`) are highlighted until the next clean or until dismissed. `aiAdded` and
-  `gap` spans have their own subtle styles.
+- New/changed blocks (`changedIn` equals the revision of the last clean, `lastClean`) are highlighted until the next
+  clean or until dismissed; accepting or removing an `aiAdded` span does not clear them. `aiAdded` and `gap` spans have
+  their own subtle styles. Removing an `aiAdded` span also removes the space it leaves behind.
+- The gap list shows the two kinds separately: unclear in the notes, and Latin term lost by the clean.
+- After a Clean, the report shows the reason for each failed (untouched) batch and one quiet line listing the Latin
+  terms it could not keep (`unresolvedTerms`).
+- Clean, undo, accept and remove of one file run under one per-file write lock (one browser tab only), and the clean
+  pane's undo/accept/remove buttons are disabled while a Clean runs. A pane action applies only to the revision it
+  showed (`!==` check); if the twin changed meanwhile it does nothing.
 - Rich text: headings, lists, quotes, code, bold/italic. No tags, no templates, no sidebar clutter.
 
 ## 10. Stack (proposed; Hooman may change it before slice 1)
@@ -363,3 +376,11 @@ Decided by Hooman:
    left out of the textbook input; section titles come from clean content (section 7).
 6. Model replies: `<think>` blocks are stripped in the provider client (section 8); Latin terms are enforced in code
    (6.4).
+7. Revisions and undo (accepted from the S5 build): the revision counter only moves forward, so undo never lets a
+   number be reused and the textbook stale check is `!==` (section 5, 6.2 step 8, section 7); accepting or removing an
+   `aiAdded` span is a new revision with a snapshot; one per-file write lock serialises Clean, undo, accept and remove,
+   and the pane buttons are disabled while a Clean runs (section 9).
+8. Gaps and Latin terms (after S4-S6): highlights follow the last clean (`lastClean`), not accept/remove; a
+   `term-missing` gap marks only the clean block that lost the term; gap marks carry a reason and the gap list splits
+   by it; the Clean report shows `unresolvedTerms` and why failed batches were left untouched; common English words are
+   never required terms (6.2 step 5, 6.4, section 9).

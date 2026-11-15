@@ -10,7 +10,7 @@ import type { Enrichment, Provider } from '../provider/types';
 import type { VaultPath } from '../vault/store';
 import type { CleanNote, RewriteLevel, SyncState } from '../vault/types';
 import { affectedIds, diffBlocks, isVerbatimBlock, makeBatches, type Batch, type RawBlock } from './diff';
-import { markGap, missingTermsError, parseCleanOutput, specToNode, verbatimNode, type CleanBlockSpec } from './output';
+import { markGap, missingTermsError, parseCleanOutput, specText, specToNode, verbatimNode, type CleanBlockSpec } from './output';
 import type { CleanDerivedStore, RawNoteReader } from './ports';
 import { blockText, codeSpans, latinTerms } from './text';
 
@@ -33,6 +33,7 @@ export interface CleanOptions {
 
 export interface FailedBatch {
 	blockIds: BlockId[];
+	/** Why the batch was left untouched: the last validation error, and missing terms of an earlier reply. */
 	error: string;
 }
 
@@ -58,6 +59,23 @@ const DEFAULT_CONTEXT = 2;
 const DEFAULT_MAX_BATCH = 8;
 
 const newId = () => nanoid(12);
+
+/**
+ * The clean block that lost `term` of raw block `rawText`, among the clean blocks built from it:
+ * the only one, or else the one at the same relative position in the text as the term in the raw
+ * block. The term is missing from the whole output, so its place can only be estimated.
+ */
+export function lostTermBlock(candidates: CleanBlockSpec[], rawText: string, term: string): CleanBlockSpec | undefined {
+	if (candidates.length <= 1) return candidates[0];
+	const at = Math.max(0, rawText.toLowerCase().indexOf(term.toLowerCase()));
+	const target = (at / Math.max(1, rawText.length)) * candidates.reduce((n, c) => n + specText(c).length, 0);
+	let end = 0;
+	for (const c of candidates) {
+		end += specText(c).length;
+		if (target < end) return c;
+	}
+	return candidates[candidates.length - 1];
+}
 
 /** Clean blocks of up to `n` unaffected raw blocks next to a batch, nearest last (before) or first (after). */
 function context(
@@ -151,6 +169,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 		});
 		let request = messages;
 		let error = '';
+		let missedFirst: string[] = [];
 		for (let attempt = 0; attempt < 2; attempt++) {
 			modelCalls++;
 			// A provider error (network, auth, ...) aborts the whole run; nothing is written.
@@ -158,10 +177,12 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			const parsed = parseCleanOutput(reply, ids, options.enrichment, inputCode, inputTerms);
 			// Missing Latin terms get one retry; after that the otherwise valid output is accepted with a gap mark.
 			if (parsed.ok && (parsed.missingTerms.length === 0 || attempt === 1)) return parsed;
+			if (parsed.ok) missedFirst = parsed.missingTerms;
 			error = parsed.ok ? missingTermsError(parsed.missingTerms) : parsed.error;
 			request = retryMessages(messages, reply, error);
 		}
-		return error;
+		// The batch stays untouched; the report says why, including terms the first reply had missed.
+		return missedFirst.length > 0 ? `${error} (the first reply missed Latin terms: ${missedFirst.join(', ')})` : error;
 	};
 
 	for (const batch of batches) {
@@ -175,7 +196,10 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 			const terms = latinTerms(b.block).filter(t => missing.has(t.toLowerCase()));
 			if (terms.length === 0) continue;
 			unresolvedTerms.push({ blockId: b.id, terms });
-			for (const spec of result.blocks) if (spec.sources.includes(b.id)) markGap(spec);
+			// Only the clean block that lost each term is marked, not every clean block of the raw block.
+			const candidates = result.blocks.filter(spec => spec.sources.includes(b.id));
+			const lost = new Set(terms.map(t => lostTermBlock(candidates, blockText(b.block), t)));
+			for (const spec of lost) if (spec) markGap(spec);
 		}
 		const nodes = result.blocks.map(spec => specToNode(spec, newId(), revision));
 		for (const b of batch.blocks) {
@@ -212,7 +236,7 @@ export async function runClean(deps: CleanDeps, path: VaultPath, options: CleanO
 		return { changed: false, revision: prevSync?.revision ?? 0, modelCalls, failed, unresolvedTerms };
 	}
 
-	const clean: CleanNote = { version: 1, fileId, revision, doc: { type: 'doc', content } };
+	const clean: CleanNote = { version: 1, fileId, revision, lastClean: revision, doc: { type: 'doc', content } };
 	const sync: SyncState = { version: 1, revision, blocks };
 	await derived.saveLastRevision(fileId, revision);
 	await derived.saveSnapshot(fileId, revision, { version: 1, clean: storedClean ?? null, sync: storedSync ?? null });

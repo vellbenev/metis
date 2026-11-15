@@ -538,7 +538,9 @@ describe('validation and retry', () => {
 			expect(a1).toHaveLength(1);
 			expect(a1[0].attrs!.changedIn).toBe(2);
 			// The whole clean block of a1 is a gap (and still rewrite, I4); it shows up in the gap data.
-			for (const n of textNodes(a1[0])) expect(n.marks!.map(m => m.type)).toEqual(['rewrite', 'gap']);
+			for (const n of textNodes(a1[0])) {
+				expect(n.marks).toEqual([{ type: 'rewrite' }, { type: 'gap', attrs: { reason: 'term-missing' } }]);
+			}
 			expect(gapTexts(after)).toEqual(textNodes(a1[0]).map(n => n.text));
 			expect(gapTexts(after).join('')).toContain('اثبات‌کننده');
 			// Unaffected blocks stay as they were (I3); the sync hash of a1 moves on, so it is not re-sent.
@@ -561,6 +563,69 @@ describe('validation and retry', () => {
 			expect(cleanFor(after, 'p2').flatMap(textNodes).every(n => !n.marks!.some(m => m.type === 'gap'))).toBe(true);
 		});
 
+		it('only the clean block that lost the term is a gap, not every clean block of the raw block', async () => {
+			// The raw block is split into two clean blocks; the term was in its second half.
+			mock = createMockProvider(req => {
+				const [b] = payload(req).blocks;
+				return JSON.stringify({
+					blocks: [
+						{ type: 'paragraph', text: 'بخش اول یادداشت که بلند است', sources: [b.id] },
+						{ type: 'paragraph', text: 'و `f(x)` را اثبات‌کننده می‌سازد', sources: [b.id] },
+					],
+				});
+			});
+			deps = { ...deps, provider: mock };
+			const raw: JSONNode = {
+				type: 'paragraph',
+				attrs: { id: 'p1' },
+				content: [
+					{ type: 'text', text: 'بخش اول یادداشت که بلند است و ' },
+					{ type: 'text', text: 'f(x)', marks: [{ type: 'code' }] },
+					{ type: 'text', text: ' را prover می‌سازد' },
+				],
+			};
+			await write([raw]);
+			const r = await clean();
+			expect(r.unresolvedTerms).toEqual([{ blockId: 'p1', terms: ['prover'] }]);
+			const [first, second] = cleanFor(await loadClean(), 'p1');
+			expect(gapTexts({ ...(await loadClean()), doc: { type: 'doc', content: [first] } })).toEqual([]);
+			// Inline code is checked byte for byte, so it is never the lost term and keeps its own marks.
+			expect(textNodes(second).map(n => [n.text, n.marks!.some(m => m.type === 'gap')])).toEqual([
+				['و ', true],
+				['f(x)', false],
+				[' را اثبات‌کننده می‌سازد', true],
+			]);
+		});
+
+		it('a merged clean block with a model gap keeps it unclear; only its other text is term-missing', async () => {
+			mock = createMockProvider(req => {
+				const ids = payload(req).blocks.map(b => b.id);
+				return JSON.stringify({ blocks: [{ type: 'paragraph', text: 'اثبات‌کننده و <gap>مبهم</gap>', sources: ids }] });
+			});
+			deps = { ...deps, provider: mock };
+			await write([para('p1', 'prover'), para('p2', 'مبهم')]);
+			const r = await clean();
+			expect(r.unresolvedTerms).toEqual([{ blockId: 'p1', terms: ['prover'] }]);
+			const nodes = (await loadClean()).doc.content!.flatMap(textNodes);
+			expect(nodes.map(n => [n.text, n.marks!.find(m => m.type === 'gap')?.attrs?.reason])).toEqual([
+				['اثبات‌کننده و ', 'term-missing'],
+				['مبهم', 'unclear'],
+			]);
+		});
+
+		it('a term-missing gap is not shown to the model as unclear when the block is cleaned again', async () => {
+			mock = createMockProvider(translate);
+			deps = { ...deps, provider: mock };
+			await write([termsLine()]);
+			await clean();
+			mock = createMockProvider(echo);
+			deps = { ...deps, provider: mock };
+			await write([{ ...termsLine(), content: [{ type: 'text', text: `${termsLine().content![0].text} !` }] }]);
+			await clean();
+			expect(payload(mock.calls[0]).blocks[0].previousClean).toContain('اثبات‌کننده');
+			expect(payload(mock.calls[0]).blocks[0].previousClean).not.toContain('<gap>');
+		});
+
 		it('an English plural written as the singular plus a Persian suffix is accepted at once', async () => {
 			mock = createMockProvider(req => {
 				const [b] = payload(req).blocks;
@@ -577,7 +642,9 @@ describe('validation and retry', () => {
 			deps = { ...deps, provider: mock };
 			await write([termsLine()]);
 			const r = await clean();
-			expect(r).toMatchObject({ changed: false, modelCalls: 2, failed: [{ blockIds: ['a1'], error: 'no blocks' }], unresolvedTerms: [] });
+			expect(r).toMatchObject({ changed: false, modelCalls: 2, unresolvedTerms: [] });
+			// The report says why: the retry's error, and the terms the first (otherwise valid) reply missed.
+			expect(r.failed).toEqual([{ blockIds: ['a1'], error: 'no blocks (the first reply missed Latin terms: prover)' }]);
 			expect(await vault.derived.loadClean(fileId)).toBeUndefined();
 		});
 
@@ -647,6 +714,10 @@ describe('provenance marks (I4)', () => {
 		expect(ai.map(n => n.text)).toEqual(['چند کلمه']);
 		expect(ai[0].marks).toEqual([{ type: 'aiAdded', attrs: { accepted: false } }]);
 		expect(nodes.filter(n => n.marks!.some(m => m.type === 'gap')).map(n => n.text)).toEqual(['نامعلوم', '؟']);
+		// A gap from the model is stored with the reason `unclear` (SPEC 5).
+		for (const n of nodes.filter(n => n.marks!.some(m => m.type === 'gap'))) {
+			expect(n.marks).toContainEqual({ type: 'gap', attrs: { reason: 'unclear' } });
+		}
 	});
 
 	it('<ai> output is invalid unless enrichment is light-add', async () => {

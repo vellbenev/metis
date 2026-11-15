@@ -189,6 +189,42 @@ describe('CleanPane', () => {
 		expect(onSelect).toHaveBeenCalledWith({ side: 'clean', id: blocks()[1].dataset.cleanId });
 	});
 
+	it('lists unclear gaps and lost-term gaps separately; a gap without a reason is unclear', async () => {
+		const t = (text: string, gap?: { type: string; attrs?: Record<string, unknown> }): JSONNode => ({
+			type: 'text',
+			text,
+			marks: gap ? [{ type: 'rewrite' }, gap] : [{ type: 'rewrite' }],
+		});
+		const cleanNote = (await vault.derived.loadClean(fileId))!;
+		await vault.derived.saveClean({
+			...cleanNote,
+			doc: {
+				type: 'doc',
+				content: [
+					{
+						type: 'paragraph',
+						attrs: { id: 'c1', sources: ['r1'], changedIn: 1 },
+						content: [t('قدیمی', { type: 'gap' }), t(' و '), t('اثبات‌کننده', { type: 'gap', attrs: { reason: 'term-missing' } })],
+					},
+				],
+			},
+		});
+		await render();
+		const list = (reason: string) => $$(`.clean-gaps[data-gap-reason="${reason}"] button`).map(b => b.textContent);
+		expect(list('unclear')).toEqual(['قدیمی']);
+		expect(list('term-missing')).toEqual(['اثبات‌کننده']);
+		expect($$('.clean-gaps h2').map(h => h.textContent)).toHaveLength(2);
+		expect($$('.gap').map(s => s.dataset.gapReason)).toEqual(['unclear', 'term-missing']);
+	});
+
+	it('accepting an aiAdded span keeps the highlights of the last clean', async () => {
+		await render();
+		expect(blocks().map(b => b.classList.contains('changed'))).toEqual([true, true]);
+		await click($('[name="ai-accept"]')!);
+		expect((await vault.derived.loadClean(fileId))!.revision).toBe(2);
+		expect(blocks().map(b => b.classList.contains('changed'))).toEqual([true, true]);
+	});
+
 	it('undo restores the previous clean exactly and is disabled when nothing is left', async () => {
 		const before = await allFiles();
 		await write([para('r1', 'اثبات'), para('r2', 'دانش صفر'), para('r3', 'یک'), para('r4', 'چهار')]);

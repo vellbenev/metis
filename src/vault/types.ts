@@ -25,7 +25,7 @@ export interface RawNote {
 /** .metis/sync/<fileId>.json */
 export interface SyncState {
 	version: 1;
-	revision: number; // +1 per successful clean
+	revision: number; // forward-only: each clean, accept or remove takes a never-used number
 	blocks: Record<BlockId, SyncBlock>;
 }
 
@@ -42,6 +42,8 @@ export interface CleanNote {
 	version: 1;
 	fileId: string;
 	revision: number;
+	/** The revision of the last clean (accept/remove leave it); absent in twins written before it existed. */
+	lastClean?: number;
 	doc: TipTapJSON; // top-level nodes: attrs.id, attrs.sources: BlockId[], attrs.changedIn: number
 }
 
