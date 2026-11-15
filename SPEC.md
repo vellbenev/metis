@@ -271,7 +271,8 @@ interface ProviderSettings {
   counterpart in the other (via `sources`).
 - One prominent button per file: **Clean**. Vault level: a quieter **Textbook** control with the stale-file count.
 - New/changed blocks (`changedIn` equals the revision of the last clean, `lastClean`) are highlighted until the next
-  clean or until dismissed; accepting or removing an `aiAdded` span does not clear them. `aiAdded` and `gap` spans have
+  clean or until dismissed, except after a note's first Clean, when nothing is highlighted because every block is new;
+  accepting or removing an `aiAdded` span does not clear them. `aiAdded` and `gap` spans have
   their own subtle styles. Removing an `aiAdded` span also removes the space it leaves behind.
 - The gap list shows the two kinds separately: unclear in the notes, and Latin term lost by the clean.
 - After a Clean, the report shows the reason for each failed (untouched) batch and one quiet line listing the Latin
