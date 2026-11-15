@@ -6,6 +6,8 @@ import { rawBlockAt, setLinkedBlocks } from './editor/linkHighlight';
 import { appSettingsStore, SettingsEntry } from './settings/SettingsEntry';
 import { CleanButton } from './ui/CleanButton';
 import { CleanPane } from './ui/CleanPane';
+import { ExportButton } from './ui/ExportButton';
+import { exportCleanTwin, exportRawNote, exportTextbook } from './export/markdown';
 import { cleanNote } from './ui/cleanAction';
 import { NoteSession } from './ui/noteSession';
 import { TextbookControl } from './ui/TextbookControl';
@@ -94,6 +96,11 @@ export function App() {
 						<button type='button' className='textbook-back' onClick={() => setTextbook(undefined)}>
 							بازگشت به یادداشت
 						</button>
+						<ExportButton
+							label='خروجی Markdown جزوه'
+							empty='هنوز جزوه‌ای ساخته نشده است.'
+							run={() => exportTextbook(textbook.store.derived, textbook.store.meta.name)}
+						/>
 						<TextbookView
 							load={() => loadVaultTextbook(textbook.store)}
 							report={textbook.report}
@@ -130,6 +137,18 @@ export function App() {
 							>
 								{showClean ? 'پنهان کردن پاک‌نویس' : 'نمایش پاک‌نویس'}
 							</button>
+							<ExportButton
+								label='خروجی Markdown یادداشت'
+								// What is on screen, read from the editor: no vault read or write.
+								run={() => exportRawNote({ title: (session?.path ?? activePath).at(-1) ?? '', doc: editor.getJSON() })}
+							/>
+							{fileId && (
+								<ExportButton
+									label='خروجی Markdown پاک‌نویس'
+									empty='این یادداشت هنوز پاک‌نویس نشده است.'
+									run={() => exportCleanTwin(vault.derived, fileId, (session?.path ?? activePath).at(-1) ?? '')}
+								/>
+							)}
 						</div>
 					)}
 					{saveError && (
