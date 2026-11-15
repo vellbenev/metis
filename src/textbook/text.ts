@@ -6,7 +6,7 @@ import type { CleanNote } from '../vault/types';
 const mark = (node: JSONNode, type: string) => node.marks?.find(m => m.type === type);
 
 /**
- * Inline content as text. `gap` spans are shown as <gap> tags. Text the model added to a clean twin
+ * Inline content as text. Unclear `gap` spans are shown as <gap> tags. Text the model added to a clean twin
  * that the user has not accepted is left out: the textbook is built from the user's notes only.
  */
 function inline(nodes: JSONNode[] | undefined): string {
@@ -16,7 +16,9 @@ function inline(nodes: JSONNode[] | undefined): string {
 		else if (typeof node.text === 'string') {
 			const ai = mark(node, 'aiAdded');
 			if (ai && ai.attrs?.accepted !== true) continue;
-			out += mark(node, 'gap') ? `<gap>${node.text}</gap>` : node.text;
+			// As in the clean prompt: a `term-missing` gap is not unclear in the notes; no reason reads as unclear.
+			const unclear = node.marks?.some(m => m.type === 'gap' && m.attrs?.reason !== 'term-missing');
+			out += unclear ? `<gap>${node.text}</gap>` : node.text;
 		} else out += inline(node.content);
 	}
 	return out;

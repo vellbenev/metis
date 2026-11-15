@@ -225,7 +225,8 @@ Storage rules:
 - Outline is a stable skeleton (`outline.json`). On each build the model proposes a small _delta_ (add / rename / merge
   / reorder sections, and assign: put a file into an existing section); the delta is applied, highlighted, and undoable
   (snapshot under `textbook/history/`).
-- Unaccepted `aiAdded` text in a clean twin is left out of the textbook input. Raw note titles never reach the model,
+- Unaccepted `aiAdded` text in a clean twin is left out of the textbook input. Only unclear `gap` spans (reason
+  `unclear` or none) reach the model as gaps; a `term-missing` gap is sent as plain text and stays in the gap list. Raw note titles never reach the model,
   so section titles come from clean content.
 - A section is regenerated only if any of its source files has a clean revision different from `sourceRevisions` (I7),
   or if its file list changed (merge, assign). Revisions only move forward and are never reused, so an undo also
@@ -384,3 +385,5 @@ Decided by Hooman:
    `term-missing` gap marks only the clean block that lost the term; gap marks carry a reason and the gap list splits
    by it; the Clean report shows `unresolvedTerms` and why failed batches were left untouched; common English words are
    never required terms (6.2 step 5, 6.4, section 9).
+9. The textbook input marks only unclear gaps as `<gap>`; `term-missing` gaps are not shown to the model as unclear
+   (section 7).

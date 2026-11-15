@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runClean } from '../clean/clean';
+import { collectGaps } from '../cleanView/model';
 import { canonicalHash, type JSONNode } from '../core/blocks';
 import { createMockProvider, type MockProvider } from '../provider/mock';
 import type { ChatRequest, Enrichment } from '../provider/types';
@@ -487,6 +488,39 @@ describe('gaps and provenance', () => {
 		await build();
 		const sent = input<SectionInput>(sectionCalls(mock)[0]).files[0].text;
 		expect(sent).toBe('prover پذیرفته<gap> مبهم</gap>');
+	});
+
+	it('wraps only unclear gaps in <gap> (no reason = unclear); term-missing gaps stay in the gap list', async () => {
+		const twin: CleanNote = {
+			version: 1,
+			fileId: 'f1',
+			revision: 1,
+			doc: {
+				type: 'doc',
+				content: [
+					{
+						type: 'paragraph',
+						attrs: { id: 'c1', sources: ['r1'], changedIn: 1 },
+						content: [
+							{ type: 'text', text: 'اثبات ', marks: [{ type: 'gap', attrs: { reason: 'term-missing' } }] },
+							rewrite('و '),
+							{ type: 'text', text: 'مبهم', marks: [{ type: 'gap', attrs: { reason: 'unclear' } }] },
+							rewrite(' و '),
+							{ type: 'text', text: 'قدیمی', marks: [{ type: 'gap' }] },
+						],
+					},
+				],
+			},
+		};
+		await vault.derived.saveClean(twin);
+		await build();
+		const sent = input<SectionInput>(sectionCalls(mock)[0]).files[0].text;
+		expect(sent).toBe('اثبات و <gap>مبهم</gap> و <gap>قدیمی</gap>');
+		expect(collectGaps(twin).map(g => [g.text, g.reason])).toEqual([
+			['اثبات ', 'term-missing'],
+			['مبهم', 'unclear'],
+			['قدیمی', 'unclear'],
+		]);
 	});
 });
 
