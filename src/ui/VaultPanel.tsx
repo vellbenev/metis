@@ -8,11 +8,12 @@ export interface VaultPanelProps extends Omit<FileTreeProps, 'store' | 'onOpen' 
 	onOpen(store: VaultStore, path: VaultPath): void;
 	/** Vault-level controls shown beside the vault name. */
 	aside?(store: VaultStore): ReactNode;
+	initialStore?: VaultStore;
 }
 
 /** Chooses a vault (a folder on disk, or IndexedDB when folders are unavailable) and shows its tree. */
-export function VaultPanel({ onOpen, aside, ...treeProps }: VaultPanelProps) {
-	const [store, setStore] = useState<VaultStore>();
+export function VaultPanel({ onOpen, aside, initialStore, ...treeProps }: VaultPanelProps) {
+	const [store, setStore] = useState(initialStore);
 	const [error, setError] = useState<string>();
 
 	async function choose(load: () => Promise<VaultStore>) {

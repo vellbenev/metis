@@ -40,6 +40,11 @@ describe('no secrets in vaults (I5)', () => {
 describe('network discipline (I6)', () => {
 	it('the OpenAI-compatible client is the only network call site in the app', () => {
 		const network = /\bfetch\b|XMLHttpRequest|WebSocket|EventSource|sendBeacon/;
-		expect(app.filter(f => network.test(f.text)).map(f => f.path)).toEqual(['provider/openai.ts']);
+		expect(app.filter(f => network.test(f.text)).map(f => f.path)).toEqual(['demo/demo.tsx', 'provider/openai.ts']);
+	});
+
+	it('the dev-only demo mode only replaces fetch with an offline stub, never calls it', () => {
+		const demo = app.find(f => f.path === 'demo/demo.tsx')!.text;
+		expect([...demo.matchAll(/\bfetch\b.{0,3}/g)].map(m => m[0])).toEqual(['fetch = ']);
 	});
 });

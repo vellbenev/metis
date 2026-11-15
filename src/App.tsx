@@ -17,7 +17,8 @@ import type { TextbookReport } from './textbook/build';
 import { VaultPanel } from './ui/VaultPanel';
 import type { VaultPath, VaultStore } from './vault/store';
 
-export function App() {
+/** `vault` opens a vault from the start (dev-only demo mode); normally the user chooses one. */
+export function App({ vault: initialVault }: { vault?: VaultStore } = {}) {
 	const editor = useEditor({
 		extensions: editorExtensions(),
 		editable: false,
@@ -59,6 +60,7 @@ export function App() {
 	return (
 		<div className='shell'>
 			<VaultPanel
+				initialStore={initialVault}
 				activePath={activePath}
 				aside={store => (
 					<TextbookControl
