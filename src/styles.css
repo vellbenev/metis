@@ -122,7 +122,20 @@ body {
 	gap: 1rem;
 }
 
+.export-bar {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin-inline-start: 1rem;
+}
+
+.export-status {
+	font-size: 0.85rem;
+	color: var(--ink-soft);
+}
+
 .clean-toggle,
+.export-button,
 .clean-tools button,
 .clean-gaps button {
 	font: inherit;
